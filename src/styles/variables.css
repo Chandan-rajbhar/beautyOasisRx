@@ -1,0 +1,89 @@
+:root {
+  /* ── Color Palette — Pleasant & Bright Blue, White, and Green ── */
+  /* Deep Sapphire Navy & Vibrant Medical Oasis Blue */
+  --color-primary-dark: #0f2942;
+  --color-primary: #1e5aa8;
+  --color-primary-light: #2563eb;
+  --color-forest-rich: #091e36;
+
+  /* Fresh Botanical Leaf Green & Emerald */
+  --color-accent-emerald: #16a34a;
+  --color-accent-sage: #22c55e;
+  --color-accent-mint: #dcfce7;
+  --color-accent-mint-light: #f0fdf4;
+
+  /* Azure Sky & Luminous Cyan Blues */
+  --color-accent-gold: #0284c7;
+  --color-accent-gold-light: #bae6fd;
+  --color-accent-sand: #f0f7ff;
+
+  /* Crisp, Bright, Pleasant Whites & Soft Serene Tints */
+  --color-cream-bg: #f8fafc;
+  --color-card-bg: #ffffff;
+  --color-surface-soft: #f0fdf4;
+  --color-surface-subtle: #f0f7ff;
+
+  /* Midnight Sapphire & Deep Ocean Cards */
+  --color-dark-section: #0b2545;
+  --color-dark-card: #0e2e54;
+  --color-dark-card-border: #1a4270;
+  --color-dark-subtext: #93c5fd;
+
+  /* Typography colors — High legibility deep slate & vibrant accents */
+  --color-text-main: #0f172a;
+  --color-text-muted: #334155;
+  --color-text-light: #64748b;
+  --color-text-inverse: #ffffff;
+
+  /* Crisp light borders */
+  --color-border-light: #e2e8f0;
+  --color-border-subtle: #cbd5e1;
+  --color-badge-green: #dcfce7;
+  --color-badge-green-text: #15803d;
+
+  /* ── Luminous Gradients ── */
+  --gradient-gold: linear-gradient(135deg, #1e5aa8 0%, #0284c7 50%, #16a34a 100%);
+  --gradient-emerald: linear-gradient(135deg, #1e5aa8 0%, #2563eb 50%, #16a34a 100%);
+  --gradient-dark: linear-gradient(135deg, #0f2942 0%, #091e36 100%);
+  --gradient-card-border: linear-gradient(135deg, rgba(37,99,235,0.4), rgba(22,163,74,0.35), rgba(255,255,255,0.95));
+  --gradient-warm-hero: linear-gradient(155deg, #f0f7ff 0%, #ffffff 50%, #f0fdf4 100%);
+
+  /* ── Typography ── */
+  --font-serif-display: 'Playfair Display', 'Cormorant Garamond', Georgia, serif;
+  --font-serif: 'Cormorant Garamond', Georgia, serif;
+  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+
+  /* ── Shadows — Cool crisp blue/sapphire base ── */
+  --shadow-xs: 0 1px 3px rgba(15, 41, 66, 0.05);
+  --shadow-sm: 0 2px 6px rgba(15, 41, 66, 0.04);
+  --shadow-md: 0 8px 24px rgba(15, 41, 66, 0.07);
+  --shadow-lg: 0 16px 40px rgba(15, 41, 66, 0.09);
+  --shadow-xl: 0 24px 60px rgba(15, 41, 66, 0.12);
+  --shadow-2xl: 0 40px 80px rgba(15, 41, 66, 0.16);
+  --shadow-emerald: 0 10px 30px rgba(22, 163, 74, 0.22);
+  --shadow-glow: 0 0 35px rgba(37, 99, 235, 0.2);
+  --shadow-glow-gold: 0 0 35px rgba(22, 163, 74, 0.25);
+  --shadow-card-hover: 0 20px 55px rgba(15, 41, 66, 0.1), 0 0 20px rgba(37, 99, 235, 0.08);
+
+  /* ── Border Radius ── */
+  --radius-sm: 6px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-xl: 28px;
+  --radius-2xl: 36px;
+  --radius-full: 9999px;
+
+  /* ── Transitions ── */
+  --transition-fast: 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-normal: 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-slow: 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+  --transition-spring: 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* ── Z-Index Scale ── */
+  --z-behind: -1;
+  --z-base: 0;
+  --z-raised: 10;
+  --z-overlay: 100;
+  --z-modal: 500;
+  --z-cursor: 99999;
+}
