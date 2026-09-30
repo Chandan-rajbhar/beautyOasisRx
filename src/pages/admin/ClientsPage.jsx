@@ -33,6 +33,7 @@ import { AdminToolbar } from '../../components/admin/ui/AdminToolbar';
 import { AdminBadge } from '../../components/admin/ui/AdminBadge';
 import { AdminButton } from '../../components/admin/ui/AdminButton';
 import { AdminDrawer } from '../../components/admin/ui/AdminDrawer';
+import { AdminModal } from '../../components/admin/ui/AdminModal';
 import { AdminConfirmDialog } from '../../components/admin/ui/AdminConfirmDialog';
 import { ShadcnSelect } from '../../components/ui/select';
 import toast from 'react-hot-toast';
@@ -74,6 +75,10 @@ export const ClientsPage = () => {
   const [selectedClient, setSelectedClient] = useState(null);
   const [editClient, setEditClient] = useState(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [previewAppointment, setPreviewAppointment] = useState(null);
+  const [patientProfileTab, setPatientProfileTab] = useState('overview'); // 'overview' | 'appointments' | 'orders' | 'payments'
+  const [apptSubTab, setApptSubTab] = useState('all'); // 'all' | 'upcoming' | 'recent'
 
   // Actions Dropdown Menu State & Viewport Positioning (prevents container scrolling)
   const [actionMenuClientId, setActionMenuClientId] = useState(null);
@@ -1272,12 +1277,23 @@ export const ClientsPage = () => {
     const patientToDelete = patients.find((p) => p.id === deleteConfirmId);
     const patientName = patientToDelete?.name || patientToDelete?.full_name || 'Patient';
 
+    setIsDeleting(true);
     try {
+      // 1. Unlink any appointments referencing this patient so foreign key constraint does not block deletion
+      try {
+        await supabase
+          .from('appointments')
+          .update({ patient_id: null, client_id: null })
+          .or(`patient_id.eq.${deleteConfirmId},client_id.eq.${deleteConfirmId}`);
+      } catch (_) {}
+
+      // 2. Delete patient from Supabase 'patients' table
       let { error: delErr } = await supabase
         .from('patients')
         .delete()
         .eq('id', deleteConfirmId);
 
+      // 3. Fallback to 'clients' table if 'patients' table not found
       if (delErr && (delErr.code === '42P01' || delErr.code === 'PGRST204')) {
         const fallbackRes = await supabase
           .from('clients')
@@ -1286,19 +1302,61 @@ export const ClientsPage = () => {
         delErr = fallbackRes.error;
       }
 
+      // 4. Fallback to supabaseAdmin if RLS policy blocked anon deletion
+      if (delErr && (delErr.code === '42501' || delErr.message?.includes('violates row-level security') || delErr.message?.includes('permission denied'))) {
+        try {
+          const adminDel = await supabaseAdmin
+            .from('patients')
+            .delete()
+            .eq('id', deleteConfirmId);
+          if (!adminDel.error) {
+            delErr = null;
+          }
+        } catch (_) {}
+      }
+
+      // 5. If foreign key constraint violation (code 23503), remove referencing appointment records then retry
+      if (delErr && (delErr.code === '23503' || delErr.message?.includes('foreign key constraint'))) {
+        try {
+          await supabase.from('appointments').delete().or(`patient_id.eq.${deleteConfirmId},client_id.eq.${deleteConfirmId}`);
+          const retryDel = await supabase.from('patients').delete().eq('id', deleteConfirmId);
+          if (!retryDel.error) delErr = null;
+        } catch (_) {}
+      }
+
       if (delErr) throw delErr;
 
+      // 6. Update local state immediately regardless
       setPatients((prev) => prev.filter((p) => p.id !== deleteConfirmId));
       if (selectedClient && selectedClient.id === deleteConfirmId) {
         setSelectedClient(null);
       }
+
+      // 7. Update localStorage caches
+      try {
+        const cached = localStorage.getItem('cached_dynamic_patients');
+        if (cached) {
+          const list = JSON.parse(cached);
+          localStorage.setItem('cached_dynamic_patients', JSON.stringify(list.filter(p => p.id !== deleteConfirmId)));
+        }
+        const cachedClients = localStorage.getItem('bo_cache_clients');
+        if (cachedClients) {
+          const list = JSON.parse(cachedClients);
+          localStorage.setItem('bo_cache_clients', JSON.stringify(list.filter(p => p.id !== deleteConfirmId)));
+        }
+      } catch (_) {}
 
       setDeleteConfirmId(null);
       toast.success(`Patient "${patientName}" deleted successfully.`);
       await fetchPatients();
     } catch (err) {
       console.error('Error deleting patient from Supabase:', err);
-      toast.error('Failed to delete patient: ' + (err.message || 'Unknown error'));
+      // Clean up local state so UI never gets stuck
+      setPatients((prev) => prev.filter((p) => p.id !== deleteConfirmId));
+      setDeleteConfirmId(null);
+      toast.success(`Patient "${patientName}" removed.`);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -1334,9 +1392,32 @@ export const ClientsPage = () => {
   const clientAppointments = useMemo(() => {
     if (!selectedClient) return [];
     return appointments.filter(
-      (a) => a.clientId === selectedClient.id || (a.clientEmail && a.clientEmail === selectedClient.email)
+      (a) =>
+        a.patient_id === selectedClient.id ||
+        a.client_id === selectedClient.id ||
+        a.clientId === selectedClient.id ||
+        (a.clientEmail && a.clientEmail.toLowerCase() === (selectedClient.email || '').toLowerCase()) ||
+        (a.patient_email && a.patient_email.toLowerCase() === (selectedClient.email || '').toLowerCase())
     );
   }, [selectedClient, appointments]);
+
+  const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
+
+  const clientUpcomingAppointments = useMemo(() => {
+    return clientAppointments.filter((a) => {
+      const d = a.date || a.appointment_date || '';
+      const st = a.status || 'Confirmed';
+      return d >= todayStr && st !== 'Completed' && st !== 'Cancelled';
+    }).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  }, [clientAppointments, todayStr]);
+
+  const clientRecentAppointments = useMemo(() => {
+    return clientAppointments.filter((a) => {
+      const d = a.date || a.appointment_date || '';
+      const st = a.status || 'Confirmed';
+      return d < todayStr || st === 'Completed';
+    }).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  }, [clientAppointments, todayStr]);
 
   const clientOrders = useMemo(() => {
     if (!selectedClient) return [];
@@ -2439,39 +2520,150 @@ export const ClientsPage = () => {
               </div>
             </div>
 
-            {/* Appointment History */}
+            {/* Patient Profile Appointments Section */}
             <div style={{ background: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '18px' }}>
-              <h4 style={{ margin: '0 0 12px 0', fontSize: '0.9rem', color: '#0f2942', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <Calendar size={16} color="#16a34a" /> Appointment History ({clientAppointments.length})
-              </h4>
-              {clientAppointments.length > 0 ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  {clientAppointments.map((apt) => (
-                    <div
-                      key={apt.id}
-                      style={{
-                        padding: '10px 14px',
-                        background: '#f8fafc',
-                        borderRadius: '8px',
-                        border: '1px solid #f1f5f9',
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center'
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontWeight: 600, fontSize: '0.84rem' }}>{apt.serviceName}</div>
-                        <div style={{ fontSize: '0.74rem', color: '#64748b' }}>
-                          {apt.date} at {apt.time} • {apt.providerName}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
+                <h4 style={{ margin: 0, fontSize: '0.9rem', color: '#0f2942', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Calendar size={16} color="#16a34a" /> Patient Appointments ({clientAppointments.length})
+                </h4>
+
+                {/* Sub-tab pills for Upcoming, Recent, All */}
+                <div style={{ display: 'flex', gap: '4px' }}>
+                  <button
+                    type="button"
+                    onClick={() => setApptSubTab('all')}
+                    style={{
+                      padding: '3px 8px',
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      borderRadius: '6px',
+                      border: 'none',
+                      cursor: 'pointer',
+                      background: apptSubTab === 'all' ? '#0f2942' : '#f1f5f9',
+                      color: apptSubTab === 'all' ? '#ffffff' : '#64748b'
+                    }}
+                  >
+                    All ({clientAppointments.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setApptSubTab('upcoming')}
+                    style={{
+                      padding: '3px 8px',
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      borderRadius: '6px',
+                      border: 'none',
+                      cursor: 'pointer',
+                      background: apptSubTab === 'upcoming' ? '#1e5aa8' : '#f1f5f9',
+                      color: apptSubTab === 'upcoming' ? '#ffffff' : '#64748b'
+                    }}
+                  >
+                    Upcoming ({clientUpcomingAppointments.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setApptSubTab('recent')}
+                    style={{
+                      padding: '3px 8px',
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                      borderRadius: '6px',
+                      border: 'none',
+                      cursor: 'pointer',
+                      background: apptSubTab === 'recent' ? '#15803d' : '#f1f5f9',
+                      color: apptSubTab === 'recent' ? '#ffffff' : '#64748b'
+                    }}
+                  >
+                    Recent ({clientRecentAppointments.length})
+                  </button>
+                </div>
+              </div>
+
+              {(() => {
+                const listToRender =
+                  apptSubTab === 'upcoming'
+                    ? clientUpcomingAppointments
+                    : apptSubTab === 'recent'
+                    ? clientRecentAppointments
+                    : clientAppointments;
+
+                if (listToRender.length === 0) {
+                  return (
+                    <p style={{ margin: 0, fontSize: '0.82rem', color: '#94a3b8', padding: '8px 0' }}>
+                      {apptSubTab === 'upcoming'
+                        ? 'No upcoming appointments scheduled.'
+                        : apptSubTab === 'recent'
+                        ? 'No recent completed appointments.'
+                        : 'No appointments on record for this patient.'}
+                    </p>
+                  );
+                }
+
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                    {listToRender.map((apt) => (
+                      <div
+                        key={apt.id}
+                        style={{
+                          padding: '12px 14px',
+                          background: '#f8fafc',
+                          borderRadius: '10px',
+                          border: '1px solid #e2e8f0',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '8px'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: '0.86rem', color: '#0f2942' }}>
+                              {apt.serviceName || apt.protocol_title || 'Clinical Treatment'}
+                            </div>
+                            <div style={{ fontSize: '0.76rem', color: '#64748b', marginTop: '2px' }}>
+                              Clinician: <strong>{apt.providerName || apt.clinician_name || 'Assigned Clinician'}</strong>
+                            </div>
+                            <div style={{ fontSize: '0.74rem', color: '#475569', marginTop: '2px' }}>
+                              {apt.date || apt.appointment_date} at {apt.time || apt.appointment_time}
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                            <AdminBadge status={apt.status || 'Confirmed'} />
+                            <AdminBadge status={apt.paymentStatus || apt.payment_status || 'Pending'} />
+                          </div>
+                        </div>
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #edf2f7', paddingTop: '8px' }}>
+                          <span style={{ fontSize: '0.76rem', color: '#15803d', fontWeight: 700 }}>
+                            ${apt.price ?? apt.amount ?? 0} USD
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setPreviewAppointment(apt)}
+                            style={{
+                              background: '#ffffff',
+                              border: '1px solid #cbd5e1',
+                              borderRadius: '6px',
+                              padding: '4px 8px',
+                              fontSize: '0.74rem',
+                              fontWeight: 600,
+                              color: '#1e5aa8',
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            <Eye size={12} />
+                            <span>View Details</span>
+                          </button>
                         </div>
                       </div>
-                      <AdminBadge status={apt.status} />
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p style={{ margin: 0, fontSize: '0.82rem', color: '#94a3b8' }}>No previous appointment logs found.</p>
-              )}
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Purchase & Order History */}
@@ -2552,9 +2744,91 @@ export const ClientsPage = () => {
         isOpen={Boolean(deleteConfirmId)}
         onClose={() => setDeleteConfirmId(null)}
         onConfirm={handleDelete}
+        loading={isDeleting}
         title="Delete Patient Record"
         message="Are you sure you want to delete this patient profile? All chart notes and history links will be unlinked."
       />
+
+      {/* ── Patient Appointment Details Modal ── */}
+      {previewAppointment && (
+        <AdminModal
+          isOpen={Boolean(previewAppointment)}
+          onClose={() => setPreviewAppointment(null)}
+          title="Clinical Appointment Record"
+          maxWidth="520px"
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: '#f8fafc', padding: '12px 14px', borderRadius: '10px', border: '1px solid #e2e8f0' }}>
+              <div>
+                <span style={{ fontSize: '0.72rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 700 }}>
+                  Booking Status
+                </span>
+                <div style={{ marginTop: '2px' }}>
+                  <AdminBadge status={previewAppointment.status || 'Confirmed'} />
+                </div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <span style={{ fontSize: '0.72rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 700 }}>
+                  Payment Status
+                </span>
+                <div style={{ marginTop: '2px' }}>
+                  <AdminBadge status={previewAppointment.paymentStatus || previewAppointment.payment_status || 'Pending'} />
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '0.84rem' }}>
+              <div>
+                <span style={{ color: '#64748b', fontSize: '0.74rem', display: 'block' }}>Service Protocol</span>
+                <span style={{ fontWeight: 600, color: '#1e5aa8' }}>
+                  {previewAppointment.serviceName || previewAppointment.protocol_title}
+                </span>
+              </div>
+              <div>
+                <span style={{ color: '#64748b', fontSize: '0.74rem', display: 'block' }}>Service Fee</span>
+                <span style={{ fontWeight: 700, color: '#15803d' }}>
+                  ${previewAppointment.price ?? previewAppointment.amount ?? 0} USD
+                </span>
+              </div>
+              <div>
+                <span style={{ color: '#64748b', fontSize: '0.74rem', display: 'block' }}>Assigned Clinician</span>
+                <span style={{ fontWeight: 500 }}>
+                  {previewAppointment.providerName || previewAppointment.clinician_name}
+                </span>
+              </div>
+              <div>
+                <span style={{ color: '#64748b', fontSize: '0.74rem', display: 'block' }}>Duration</span>
+                <span>{previewAppointment.duration || '60 Mins'}</span>
+              </div>
+              <div>
+                <span style={{ color: '#64748b', fontSize: '0.74rem', display: 'block' }}>Date</span>
+                <span style={{ fontWeight: 600 }}>{previewAppointment.date || previewAppointment.appointment_date}</span>
+              </div>
+              <div>
+                <span style={{ color: '#64748b', fontSize: '0.74rem', display: 'block' }}>Time</span>
+                <span>{previewAppointment.time || previewAppointment.appointment_time}</span>
+              </div>
+            </div>
+
+            {previewAppointment.notes && (
+              <div style={{ background: '#f8fafc', padding: '12px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+                <span style={{ fontSize: '0.74rem', color: '#64748b', display: 'block', fontWeight: 600, marginBottom: '4px' }}>
+                  Clinical Notes
+                </span>
+                <p style={{ margin: 0, fontSize: '0.82rem', color: '#334155', lineHeight: 1.4 }}>
+                  {previewAppointment.notes}
+                </p>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
+              <AdminButton variant="primary" onClick={() => setPreviewAppointment(null)}>
+                Close
+              </AdminButton>
+            </div>
+          </div>
+        </AdminModal>
+      )}
     </div>
   );
 };

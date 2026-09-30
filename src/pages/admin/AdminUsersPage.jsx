@@ -37,7 +37,7 @@ import toast from 'react-hot-toast';
 // ─── Role definitions ────────────────────────────────────────────────────────
 const ROLES = [
   { value: 'super_admin', label: 'Super Admin', },
-  { value: 'patient', label: 'Patient', },
+  // { value: 'patient', label: 'Patient', },
 ];
 
 const STATUSES = [

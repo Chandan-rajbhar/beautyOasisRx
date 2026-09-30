@@ -7,6 +7,9 @@ import { ScrollToTop } from './components/admin/layout/ScrollToTop';
 import { Toaster } from 'react-hot-toast';
 import './styles/admin.css';
 
+// ── Public Website (no auth required) ──
+const PublicWebsitePage = lazy(() => import('./pages/PublicWebsitePage').then(m => ({ default: m.PublicWebsitePage })));
+
 // ── Lazy-loaded Admin Pages (Code Splitting for Optimal Load Performance) ──
 const AdminLoginPage = lazy(() => import('./pages/admin/AdminLoginPage').then(m => ({ default: m.AdminLoginPage })));
 const SignUpPage = lazy(() => import('./pages/admin/SignUpPage').then(m => ({ default: m.SignUpPage })));
@@ -92,6 +95,11 @@ export function App() {
           />
           <Suspense fallback={<PageLoader />}>
             <Routes>
+              {/* ── Public Website (no auth required) ── */}
+              <Route path="/home" element={<PublicWebsitePage />} />
+              <Route path="/public" element={<PublicWebsitePage />} />
+              <Route path="/website" element={<PublicWebsitePage />} />
+
               {/* Login Route */}
               <Route path="/login" element={<AdminLoginPage />} />
               <Route path="/admin/login" element={<AdminLoginPage />} />

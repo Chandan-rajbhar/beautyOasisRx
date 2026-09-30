@@ -15,7 +15,7 @@ import {
   Shield,
   Settings,
   LogOut,
-  X
+  X,
 } from 'lucide-react';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import { useAdminData } from '../../../context/AdminDataContext';
@@ -94,7 +94,7 @@ export const AdminSidebar = ({
       label: "System & Governance",
       items: [
         { label: "Admin Users", path: "/users", icon: <Shield size={18} />, permission: "users" },
-        { label: "Clinic Settings", path: "/settings", icon: <Settings size={18} />, permission: "settings" }
+        // { label: "Clinic Settings", path: "/settings", icon: <Settings size={18} />, permission: "settings" }
       ]
     }
   ];

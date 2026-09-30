@@ -223,7 +223,7 @@ export const ShadcnSelect = ({
       </SelectTrigger>
       <SelectContent>
         {options.map((opt) => (
-          <SelectItem key={opt.value} value={opt.value}>
+          <SelectItem key={opt.value} value={opt.value} disabled={Boolean(opt.disabled)}>
             {opt.label}
           </SelectItem>
         ))}
