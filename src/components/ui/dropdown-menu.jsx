@@ -117,11 +117,44 @@ export const DropdownMenuContent = ({
   align = 'end',
   className = '',
   style = {},
-  width = '180px'
+  width = '180px',
+  fixed = false
 }) => {
-  const { open, containerRef } = useContext(DropdownMenuContext);
+  const { open, containerRef, triggerRef } = useContext(DropdownMenuContext);
+  const [fixedPos, setFixedPos] = useState(null);
+
+  useEffect(() => {
+    if (open && fixed && triggerRef?.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      const DROPDOWN_HEIGHT = 280;
+      const w = parseInt(width, 10) || 180;
+      const spaceBelow = window.innerHeight - rect.bottom - 8;
+      const spaceAbove = rect.top - 8;
+      const openAbove = spaceBelow < DROPDOWN_HEIGHT && spaceAbove >= DROPDOWN_HEIGHT;
+      const top = openAbove ? Math.max(8, rect.top - DROPDOWN_HEIGHT) : rect.bottom + 4;
+      const naturalRight = window.innerWidth - rect.right;
+      const right = Math.max(8, Math.min(naturalRight, window.innerWidth - w - 8));
+      setFixedPos({ top, right });
+    }
+  }, [open, fixed, triggerRef, width]);
 
   if (!open) return null;
+
+  const positionStyles = fixed && fixedPos
+    ? {
+        position: 'fixed',
+        top: `${fixedPos.top}px`,
+        right: `${fixedPos.right}px`,
+        left: 'auto',
+        maxHeight: 'calc(100vh - 24px)',
+        overflow: 'visible'
+      }
+    : {
+        position: 'absolute',
+        top: 'calc(100% + 4px)',
+        left: align === 'start' ? 0 : 'auto',
+        right: align === 'end' ? 0 : 'auto'
+      };
 
   return (
     <div
@@ -130,17 +163,15 @@ export const DropdownMenuContent = ({
       className={`shadcn-dropdown-content ${className}`}
       onClick={(e) => e.stopPropagation()}
       style={{
-        position: 'absolute',
-        top: 'calc(100% + 4px)',
-        left: align === 'start' ? 0 : 'auto',
-        right: align === 'end' ? 0 : 'auto',
+        ...positionStyles,
         minWidth: width,
+        maxWidth: 'calc(100vw - 16px)',
         backgroundColor: '#ffffff',
         border: '1px solid #e2e8f0',
         borderRadius: '10px',
         padding: '6px',
         boxShadow: '0 10px 25px -5px rgba(15, 41, 66, 0.14), 0 8px 10px -6px rgba(15, 41, 66, 0.08)',
-        zIndex: 9999,
+        zIndex: 99999,
         display: 'flex',
         flexDirection: 'column',
         gap: '2px',
@@ -237,5 +268,7 @@ export const DropdownMenuLabel = ({ children, className = '', style = {} }) => (
     {children}
   </div>
 );
+
+export const useDropdownMenu = () => useContext(DropdownMenuContext);
 
 export default DropdownMenu;

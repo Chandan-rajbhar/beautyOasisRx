@@ -5,9 +5,11 @@ import { AdminLoginPage } from './AdminLoginPage';
 import { AdminDashboardPage } from './AdminDashboardPage';
 import { AppointmentsPage } from './AppointmentsPage';
 import { ClientsPage } from './ClientsPage';
+import { PatientProfilePage } from './PatientProfilePage';
 import { ServicesPage } from './ServicesPage';
 import { ProductsPage } from './ProductsPage';
 import { OrdersPage } from './OrdersPage';
+import { OrderDetailsPage } from './OrderDetailsPage';
 import { PaymentsPage } from './PaymentsPage';
 import { ProvidersPage } from './ProvidersPage';
 import { InquiriesPage } from './InquiriesPage';
@@ -16,6 +18,7 @@ import { NotificationsPage } from './NotificationsPage';
 import { AdminUsersPage } from './AdminUsersPage';
 import { SettingsPage } from './SettingsPage';
 import { ProfilePage } from './ProfilePage';
+import { AppointmentTimePage } from './AppointmentTimePage';
 
 export const AdminRootRouter = () => {
   return (
@@ -29,15 +32,19 @@ export const AdminRootRouter = () => {
         <Route path="dashboard" element={<AdminDashboardPage />} />
         <Route path="appointments" element={<AppointmentsPage />} />
         <Route path="clients" element={<ClientsPage />} />
+        <Route path="patients/:patientId" element={<PatientProfilePage />} />
+        <Route path="clients/:patientId" element={<PatientProfilePage />} />
         <Route path="services" element={<ServicesPage />} />
         <Route path="products" element={<ProductsPage />} />
         <Route path="orders" element={<OrdersPage />} />
+        <Route path="orders/:orderId" element={<OrderDetailsPage />} />
         <Route path="payments" element={<PaymentsPage />} />
         <Route path="providers" element={<ProvidersPage />} />
         <Route path="inquiries" element={<InquiriesPage />} />
         <Route path="content" element={<WebsiteContentPage />} />
         <Route path="notifications" element={<NotificationsPage />} />
         <Route path="users" element={<AdminUsersPage />} />
+        <Route path="appointment-times" element={<AppointmentTimePage />} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="profile" element={<ProfilePage />} />
         {/* Catch-all fallback */}

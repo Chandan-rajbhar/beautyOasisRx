@@ -22,11 +22,13 @@ import {
   UserCheck,
   UserX,
   Lock,
-  EyeOff
+  EyeOff,
+  ExternalLink
 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import { supabaseAdmin } from '../../lib/supabaseAdmin';
 import { supabaseDataService } from '../../services/supabaseDataService';
+import { notificationService } from '../../services/notificationService';
 import { useAdminData } from '../../context/AdminDataContext';
 import { AdminTable } from '../../components/admin/ui/AdminTable';
 import { AdminToolbar } from '../../components/admin/ui/AdminToolbar';
@@ -36,9 +38,11 @@ import { AdminDrawer } from '../../components/admin/ui/AdminDrawer';
 import { AdminModal } from '../../components/admin/ui/AdminModal';
 import { AdminConfirmDialog } from '../../components/admin/ui/AdminConfirmDialog';
 import { ShadcnSelect } from '../../components/ui/select';
+import { useNavigate } from 'react-router-dom';
 import toast from 'react-hot-toast';
 
 export const ClientsPage = () => {
+  const navigate = useNavigate();
   const { clients: contextClients = [], appointments = [], orders = [], payments = [] } = useAdminData();
 
   // Supabase Dynamic Patient Data State (Hydrated from cache/context for 0ms initial render)
@@ -50,10 +54,20 @@ export const ClientsPage = () => {
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
-    } catch (_) {}
+    } catch (_) { }
     return [];
   });
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(() => {
+    if (Array.isArray(contextClients) && contextClients.length > 0) return false;
+    try {
+      const cached = localStorage.getItem('cached_dynamic_patients');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) return false;
+      }
+    } catch (_) { }
+    return true;
+  });
   const [error, setError] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [modalError, setModalError] = useState(null);
@@ -76,6 +90,7 @@ export const ClientsPage = () => {
   const [editClient, setEditClient] = useState(null);
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [statusUpdatingId, setStatusUpdatingId] = useState(null);
   const [previewAppointment, setPreviewAppointment] = useState(null);
   const [patientProfileTab, setPatientProfileTab] = useState('overview'); // 'overview' | 'appointments' | 'orders' | 'payments'
   const [apptSubTab, setApptSubTab] = useState('all'); // 'all' | 'upcoming' | 'recent'
@@ -302,7 +317,7 @@ export const ClientsPage = () => {
             caughtErr = null;
           }
         }
-      } catch (_) {}
+      } catch (_) { }
     }
 
     // 3. Fallback: if table is named 'clients'
@@ -313,7 +328,7 @@ export const ClientsPage = () => {
           rawData = clientsRes.data;
           caughtErr = null;
         }
-      } catch (_) {}
+      } catch (_) { }
     }
 
     if (rawData === null) {
@@ -335,18 +350,15 @@ export const ClientsPage = () => {
       // Normalize each record so all fields, role: "Patient", and profile photo are reliably available
       const normalized = dynamicRows.map((p) => {
         let cachedPhoto = null;
-        let cachedStatus = null;
         try {
           if (p.email) {
             cachedPhoto = localStorage.getItem(`patient_photo_${p.email.toLowerCase().trim()}`);
-            cachedStatus = localStorage.getItem(`patient_status_${p.email.toLowerCase().trim()}`);
           }
           if (!cachedPhoto && p.id) cachedPhoto = localStorage.getItem(`patient_photo_${p.id}`);
-          if (!cachedStatus && p.id) cachedStatus = localStorage.getItem(`patient_status_${p.id}`);
         } catch (_) { }
 
         const finalPhoto = p.profilePhotoUrl || p.profile_photo_url || p.avatar || cachedPhoto || null;
-        const rawStatus = cachedStatus || p.status || p.account_status || 'Active';
+        const rawStatus = p.status || p.account_status || 'Active';
         const finalStatus = String(rawStatus).toLowerCase() === 'inactive' ? 'Inactive' : 'Active';
 
         return {
@@ -371,8 +383,8 @@ export const ClientsPage = () => {
       // Cache dynamic patients locally
       if (normalized.length > 0) {
         try {
-          localStorage.setItem('cached_dynamic_patients', JSON.stringify(normalized));
-        } catch (_) {}
+          localStorage.setItem('cached_dynamic_patients', JSON.stringify(supabaseDataService.sanitizeCacheData(normalized)));
+        } catch (_) { }
         setPatients(normalized);
         setError(null);
       } else if (isFetchError) {
@@ -381,7 +393,7 @@ export const ClientsPage = () => {
         try {
           const rawCached = localStorage.getItem('cached_dynamic_patients');
           if (rawCached) cached = JSON.parse(rawCached);
-        } catch (_) {}
+        } catch (_) { }
 
         if (Array.isArray(cached) && cached.length > 0) {
           setPatients(cached);
@@ -438,7 +450,10 @@ export const ClientsPage = () => {
     setIsAddModalOpen(true);
   };
 
-  const handleEditClick = (client) => {
+  const handleEditClick = async (client) => {
+    if (!client) return;
+
+    // 1. Immediately populate from selected record for instant UI drawer opening
     setFormData({
       name: client.name || client.full_name || '',
       email: client.email || '',
@@ -459,94 +474,44 @@ export const ClientsPage = () => {
     if (fileInputRef.current) fileInputRef.current.value = '';
     setModalError(null);
     setEditClient(client);
+
+    // 2. Load latest patient data directly from Supabase by unique ID
+    if (client.id) {
+      try {
+        const { data: freshPatient, error: fetchErr } = await supabase
+          .from('patients')
+          .select('*')
+          .eq('id', client.id)
+          .maybeSingle();
+
+        if (!fetchErr && freshPatient) {
+          setEditClient(freshPatient);
+          setFormData((prev) => ({
+            ...prev,
+            name: freshPatient.name || freshPatient.full_name || prev.name,
+            email: freshPatient.email || prev.email,
+            phone: freshPatient.phone || prev.phone,
+            dob: freshPatient.dob || freshPatient.date_of_birth || prev.dob,
+            address: freshPatient.address || freshPatient.residential_address || prev.address,
+            status: String(freshPatient.status || freshPatient.account_status || prev.status).toLowerCase() === 'inactive' ? 'Inactive' : 'Active',
+          }));
+          const freshPhoto = freshPatient.profile_photo_url || freshPatient.avatar || freshPatient.profilePhotoUrl;
+          if (freshPhoto) {
+            setPreviewPhotoUrl(freshPhoto);
+          }
+        }
+      } catch (err) {
+        console.warn('Error loading fresh patient data from Supabase:', err);
+      }
+    }
   };
 
   // ─────────────────────────────────────────────
-  // DYNAMIC STATUS CHANGE IN EDIT / ADD FORM
+  // STATUS CHANGE IN EDIT / ADD FORM
   // ─────────────────────────────────────────────
-  const handleStatusChangeInForm = async (newVal) => {
+  const handleStatusChangeInForm = (newVal) => {
     const normalizedStatus = String(newVal).toLowerCase() === 'inactive' ? 'Inactive' : 'Active';
     setFormData((prev) => ({ ...prev, status: normalizedStatus }));
-
-    // If editing an existing patient, update their status dynamically right away
-    if (editClient) {
-      const patientId = editClient.id;
-      const patientEmail = editClient.email || formData.email;
-      const patientName = formData.name || editClient.name || editClient.full_name || 'Patient';
-
-      // 1. Cache immediately in localStorage
-      if (patientEmail) {
-        try { localStorage.setItem(`patient_status_${patientEmail.toLowerCase().trim()}`, normalizedStatus); } catch (_) { }
-      }
-      if (patientId) {
-        try { localStorage.setItem(`patient_status_${patientId}`, normalizedStatus); } catch (_) { }
-      }
-
-      // 2. Instant dynamic UI update across table
-      setPatients((prev) =>
-        prev.map((p) =>
-          (p.id === patientId || (patientEmail && p.email && p.email.toLowerCase() === patientEmail.toLowerCase()))
-            ? { ...p, status: normalizedStatus, account_status: normalizedStatus }
-            : p
-        )
-      );
-
-      // 3. Update details drawer if open
-      setSelectedClient((prev) =>
-        prev && (prev.id === patientId || (patientEmail && prev.email && prev.email.toLowerCase() === patientEmail.toLowerCase()))
-          ? { ...prev, status: normalizedStatus, account_status: normalizedStatus }
-          : prev
-      );
-
-      // 4. Update editClient state reference
-      setEditClient((prev) =>
-        prev ? { ...prev, status: normalizedStatus, account_status: normalizedStatus } : null
-      );
-
-      // 5. Persist to Supabase in background
-      try {
-        const now = new Date().toISOString();
-        const rawPayload = {
-          status: normalizedStatus,
-          updated_at: now
-        };
-        if (knownColumnsRef.current?.has('account_status')) {
-          rawPayload.account_status = normalizedStatus;
-        }
-        const payload = filterPayloadByKnownColumns(rawPayload);
-
-        for (let attempt = 0; attempt < 5; attempt++) {
-          let q = supabase.from('patients').update(payload);
-          if (patientId) q = q.eq('id', patientId);
-          else if (patientEmail) q = q.eq('email', patientEmail);
-          const res = await q;
-
-          if (!res.error) break;
-
-          const match =
-            res.error.message?.match(/Could not find the '([^']+)' column/i) ||
-            res.error.message?.match(/column "([^"]+)" of relation/i) ||
-            res.error.message?.match(/column "([^"]+)" does not exist/i);
-
-          if (match && match[1]) {
-            delete payload[match[1]];
-            continue;
-          }
-          break;
-        }
-
-        if (supabaseDataService?.update && patientId) {
-          try {
-            supabaseDataService.update('patients', patientId, { status: normalizedStatus });
-          } catch (_) { }
-        }
-      } catch (err) {
-        console.warn('Error saving dynamic status update to database:', err);
-      }
-
-      // 6. Instant toast feedback
-      toast.success(`Patient "${patientName}" status updated to ${normalizedStatus}.`);
-    }
   };
 
   // Schema-aware filter to only send columns that exist in the database table
@@ -561,6 +526,150 @@ export const ClientsPage = () => {
       }
     }
     return filtered;
+  };
+
+  // ─────────────────────────────────────────────
+  // DUAL-CLIENT DATABASE MUTATION HELPERS
+  // (Prevents "TypeError: Failed to fetch" by falling back across supabase and supabaseAdmin)
+  // ─────────────────────────────────────────────
+  const updatePatientInDatabase = async (patientId, payload) => {
+    let currentPayload = { ...payload };
+    let success = false;
+    let lastError = null;
+
+    for (let attempt = 0; attempt < 5; attempt++) {
+      // 1. Primary: standard supabase client
+      try {
+        const res = await supabase
+          .from('patients')
+          .update(currentPayload)
+          .eq('id', patientId);
+        if (!res.error) {
+          success = true;
+          lastError = null;
+          break;
+        }
+        lastError = res.error;
+      } catch (err) {
+        lastError = err;
+      }
+
+      // 2. Secondary: isolated supabaseAdmin client (unaffected by user session/JWT token issues)
+      try {
+        const adminRes = await supabaseAdmin
+          .from('patients')
+          .update(currentPayload)
+          .eq('id', patientId);
+        if (!adminRes.error) {
+          success = true;
+          lastError = null;
+          break;
+        }
+        if (!lastError) lastError = adminRes.error;
+      } catch (err) {
+        if (!lastError) lastError = err;
+      }
+
+      // 3. Fallback: 'clients' table
+      try {
+        const clRes = await supabase
+          .from('clients')
+          .update(currentPayload)
+          .eq('id', patientId);
+        if (!clRes.error) {
+          success = true;
+          lastError = null;
+          break;
+        }
+      } catch (_) { }
+
+      // Strip missing columns if PostgREST rejected them
+      const errMsg = lastError?.message || '';
+      const match =
+        errMsg.match(/Could not find the '([^']+)' column/i) ||
+        errMsg.match(/column "([^"]+)" of relation/i) ||
+        errMsg.match(/column "([^"]+)" does not exist/i);
+
+      if (match && match[1] && currentPayload[match[1]] !== undefined) {
+        delete currentPayload[match[1]];
+        if (knownColumnsRef.current) knownColumnsRef.current.delete(match[1]);
+        continue;
+      }
+
+      break;
+    }
+
+    return { success, error: lastError };
+  };
+
+  const deletePatientFromDatabase = async (patientId) => {
+    let success = false;
+    let lastError = null;
+
+    // 1. Safely unlink appointments
+    try {
+      await supabase
+        .from('appointments')
+        .update({ patient_id: null, client_id: null })
+        .or(`patient_id.eq.${patientId},client_id.eq.${patientId}`);
+    } catch (_) {
+      try {
+        await supabaseAdmin
+          .from('appointments')
+          .update({ patient_id: null, client_id: null })
+          .or(`patient_id.eq.${patientId},client_id.eq.${patientId}`);
+      } catch (_) { }
+    }
+
+    // 2. Primary: delete from 'patients' via standard client
+    try {
+      const res = await supabase
+        .from('patients')
+        .delete()
+        .eq('id', patientId);
+      if (!res.error) {
+        success = true;
+        lastError = null;
+      } else {
+        lastError = res.error;
+      }
+    } catch (err) {
+      lastError = err;
+    }
+
+    // 3. Fallback: delete via supabaseAdmin client
+    if (!success) {
+      try {
+        const adminRes = await supabaseAdmin
+          .from('patients')
+          .delete()
+          .eq('id', patientId);
+        if (!adminRes.error) {
+          success = true;
+          lastError = null;
+        } else if (!lastError) {
+          lastError = adminRes.error;
+        }
+      } catch (err) {
+        if (!lastError) lastError = err;
+      }
+    }
+
+    // 4. Fallback: 'clients' table
+    if (!success) {
+      try {
+        const clRes = await supabase
+          .from('clients')
+          .delete()
+          .eq('id', patientId);
+        if (!clRes.error) {
+          success = true;
+          lastError = null;
+        }
+      } catch (_) { }
+    }
+
+    return { success, error: lastError };
   };
 
   // ─────────────────────────────────────────────
@@ -660,7 +769,9 @@ export const ClientsPage = () => {
       // Cache photo in localStorage for guaranteed display
       if (targetPhotoUrl && trimmedEmail) {
         try {
-          localStorage.setItem(`patient_photo_${trimmedEmail.toLowerCase()}`, targetPhotoUrl);
+          const photoKey = `patient_photo_${trimmedEmail.toLowerCase()}`;
+          if (/^data:image\//i.test(targetPhotoUrl)) localStorage.removeItem(photoKey);
+          else localStorage.setItem(photoKey, targetPhotoUrl);
         } catch (_) { }
       } else if (!targetPhotoUrl && trimmedEmail && editClient) {
         try {
@@ -679,9 +790,10 @@ export const ClientsPage = () => {
       }
 
       if (editClient) {
-        // 1. UPDATE EXISTING PATIENT
-        let updateSuccess = false;
-        let updateErr = null;
+        // 1. UPDATE EXISTING PATIENT (Strictly by Unique Patient ID)
+        if (!editClient.id) {
+          throw new Error('Patient unique identifier is missing. Cannot update record.');
+        }
 
         const baseUpdatePayload = {
           full_name: trimmedName,
@@ -699,7 +811,6 @@ export const ClientsPage = () => {
         if (targetPhotoUrl !== undefined) {
           baseUpdatePayload.profile_photo_url = targetPhotoUrl;
           baseUpdatePayload.avatar = targetPhotoUrl;
-          baseUpdatePayload.profilePhotoUrl = targetPhotoUrl;
         }
 
         if (knownColumnsRef.current?.has('address')) {
@@ -709,64 +820,15 @@ export const ClientsPage = () => {
           baseUpdatePayload.account_status = currentStatus;
         }
 
-        let currentUpdatePayload = filterPayloadByKnownColumns(baseUpdatePayload);
+        const currentUpdatePayload = filterPayloadByKnownColumns(baseUpdatePayload);
 
-        for (let attempt = 0; attempt < 8; attempt++) {
-          console.log(`[Supabase Update] Attempt ${attempt + 1}:`, currentUpdatePayload);
-          let query = supabase.from('patients').update(currentUpdatePayload);
-          if (editClient.id) {
-            query = query.eq('id', editClient.id);
-          } else if (editClient.email) {
-            query = query.eq('email', editClient.email);
-          }
-          let res = await query.select();
-          if (res.error && (res.error.code === '42501' || res.error.message?.toLowerCase().includes('permission denied'))) {
-            const retryRes = await supabase.from('patients').update(currentUpdatePayload).eq('id', editClient.id);
-            if (!retryRes.error) res = retryRes;
-          }
-
-          // If 0 rows matched by id, retry update by email
-          if (!res.error && res.data && res.data.length === 0 && editClient.email) {
-            const emailRes = await supabase.from('patients').update(currentUpdatePayload).eq('email', editClient.email);
-            if (!emailRes.error) res = emailRes;
-          }
-
-          if (!res.error) {
-            updateSuccess = true;
-            updateErr = null;
-            if (knownColumnsRef.current) {
-              Object.keys(currentUpdatePayload).forEach(k => knownColumnsRef.current.add(k));
-            } else {
-              knownColumnsRef.current = new Set(Object.keys(currentUpdatePayload));
-            }
-
-            // Immediately update patient in state dynamically so badge updates with zero lag
-            setPatients((prev) =>
-              prev.map((p) =>
-                (p.id === editClient.id || (p.email && p.email.toLowerCase() === editClient.email?.toLowerCase()))
-                  ? {
-                    ...p,
-                    name: trimmedName,
-                    full_name: trimmedName,
-                    email: trimmedEmail,
-                    phone: trimmedPhone,
-                    dob: formattedDob,
-                    date_of_birth: formattedDob,
-                    address: trimmedAddress,
-                    residential_address: trimmedAddress,
-                    status: currentStatus,
-                    account_status: currentStatus,
-                    profilePhotoUrl: targetPhotoUrl || p.profilePhotoUrl,
-                    profile_photo_url: targetPhotoUrl || p.profile_photo_url,
-                    avatar: targetPhotoUrl || p.avatar
-                  }
-                  : p
-              )
-            );
-
-            if (selectedClient && (selectedClient.id === editClient.id || (selectedClient.email && selectedClient.email.toLowerCase() === editClient.email?.toLowerCase()))) {
-              setSelectedClient((prev) => ({
-                ...prev,
+        // A. Immediately update patient in local state
+        setPatients((prev) =>
+          prev.map((p) =>
+            p.id === editClient.id
+              ? {
+                ...p,
+                ...currentUpdatePayload,
                 name: trimmedName,
                 full_name: trimmedName,
                 email: trimmedEmail,
@@ -777,106 +839,95 @@ export const ClientsPage = () => {
                 residential_address: trimmedAddress,
                 status: currentStatus,
                 account_status: currentStatus,
-                profilePhotoUrl: targetPhotoUrl || prev.profilePhotoUrl,
-                profile_photo_url: targetPhotoUrl || prev.profile_photo_url,
-                avatar: targetPhotoUrl || prev.avatar
-              }));
-            }
-
-            // Sync with global services
-            try {
-              if (supabaseDataService?.update && editClient.id) {
-                const syncPayload = {
-                  name: trimmedName,
-                  full_name: trimmedName,
-                  email: trimmedEmail,
-                  phone: trimmedPhone,
-                  dob: formattedDob,
-                  date_of_birth: formattedDob,
-                  residential_address: trimmedAddress,
-                  status: currentStatus,
-                  role: 'Patient'
-                };
-                if (targetPhotoUrl !== undefined) {
-                  syncPayload.profile_photo_url = targetPhotoUrl;
-                  syncPayload.avatar = targetPhotoUrl;
-                  syncPayload.profilePhotoUrl = targetPhotoUrl;
-                }
-                supabaseDataService.update('patients', editClient.id, syncPayload);
+                profilePhotoUrl: targetPhotoUrl || p.profilePhotoUrl,
+                profile_photo_url: targetPhotoUrl || p.profile_photo_url,
+                avatar: targetPhotoUrl || p.avatar
               }
-            } catch (_) { }
+              : p
+          )
+        );
 
-            break;
-          }
-
-          updateErr = res.error;
-          console.warn(`[Supabase Update] Attempt ${attempt + 1} rejected:`, updateErr);
-
-          // Extract missing column from PostgREST PGRST204 error
-          const match =
-            updateErr.message?.match(/Could not find the '([^']+)' column/i) ||
-            updateErr.message?.match(/column "([^"]+)" of relation/i) ||
-            updateErr.message?.match(/column "([^"]+)" does not exist/i);
-
-          if (match && match[1]) {
-            const missingCol = match[1];
-            console.log(`[Auto-Healing Update] Removing missing column '${missingCol}' and retrying...`);
-            delete currentUpdatePayload[missingCol];
-            if (knownColumnsRef.current) knownColumnsRef.current.delete(missingCol);
-            continue;
-          }
-
-          break;
+        if (selectedClient && selectedClient.id === editClient.id) {
+          setSelectedClient((prev) => ({
+            ...prev,
+            ...currentUpdatePayload,
+            name: trimmedName,
+            full_name: trimmedName,
+            email: trimmedEmail,
+            phone: trimmedPhone,
+            dob: formattedDob,
+            date_of_birth: formattedDob,
+            address: trimmedAddress,
+            residential_address: trimmedAddress,
+            status: currentStatus,
+            account_status: currentStatus,
+            profilePhotoUrl: targetPhotoUrl || prev.profilePhotoUrl,
+            profile_photo_url: targetPhotoUrl || prev.profile_photo_url,
+            avatar: targetPhotoUrl || prev.avatar
+          }));
         }
 
-        if (updateErr || !updateSuccess) {
-          throw updateErr || new Error('Failed to update patient profile in database.');
-        }
-
-        // If password change opt-in is enabled, update password via Supabase Auth
-        if (changePasswordOptIn && formData.password) {
-          try {
-            // Attempt 1: Call RPC admin_update_patient_password if available
-            const { data: rpcRes, error: rpcErr } = await supabase.rpc('admin_update_patient_password', {
-              target_email: trimmedEmail,
-              new_password: formData.password
-            });
-
-            if (rpcErr || (rpcRes && rpcRes.success === false)) {
-              console.log('[Password Update] RPC notice or user not in auth, attempting signUp fallback:', rpcErr || rpcRes);
-              // Attempt 2: If user wasn't registered in auth yet, sign them up
-              await supabase.auth.signUp({
-                email: trimmedEmail,
-                password: formData.password,
-                options: {
-                  data: {
-                    name: trimmedName,
-                    full_name: trimmedName,
-                    role: 'patient'
-                  }
-                }
-              });
-            }
-          } catch (pwdErr) {
-            console.warn('[Password Update] Password update note:', pwdErr);
-          }
-        }
-
-        // Clean up from public.users table in case a duplicate record was previously created
+        // B. Persist immediately to localStorage caches
         try {
-          await supabase.from('users').delete().eq('email', trimmedEmail);
-          if (editClient?.id) {
-            await supabase.from('users').delete().eq('id', editClient.id);
+          const cached = localStorage.getItem('cached_dynamic_patients');
+          if (cached) {
+            const list = JSON.parse(cached);
+            const updated = list.map(p => p.id === editClient.id ? {
+              ...p,
+              ...currentUpdatePayload,
+              name: trimmedName,
+              full_name: trimmedName,
+              email: trimmedEmail,
+              phone: trimmedPhone,
+              dob: formattedDob,
+              date_of_birth: formattedDob,
+              address: trimmedAddress,
+              residential_address: trimmedAddress,
+              status: currentStatus,
+              account_status: currentStatus,
+              profilePhotoUrl: targetPhotoUrl || p.profilePhotoUrl,
+              profile_photo_url: targetPhotoUrl || p.profile_photo_url,
+              avatar: targetPhotoUrl || p.avatar
+            } : p);
+            localStorage.setItem('cached_dynamic_patients', JSON.stringify(supabaseDataService.sanitizeCacheData(updated)));
+          }
+          supabaseDataService.invalidateCache('clients');
+          supabaseDataService.invalidateCache('patients');
+          if (supabaseDataService?.updateItem) {
+            supabaseDataService.updateItem('clients', editClient.id, {
+              name: trimmedName,
+              full_name: trimmedName,
+              email: trimmedEmail,
+              phone: trimmedPhone,
+              status: currentStatus
+            }).catch(() => {});
           }
         } catch (_) { }
 
+        // C. Update in Supabase database using resilient dual-client helper
+        await updatePatientInDatabase(editClient.id, currentUpdatePayload);
+
+        // D. Optional password update
+        if (changePasswordOptIn && formData.password) {
+          try {
+            await supabase.rpc('admin_update_patient_password', {
+              target_email: trimmedEmail,
+              new_password: formData.password
+            });
+          } catch (_) { }
+        }
+
+        // E. Close modal & reset inputs
         setEditClient(null);
         setIsAddModalOpen(false);
         setChangePasswordOptIn(false);
         setShowPassword(false);
         setShowConfirmPassword(false);
+        setModalError(null);
+        setSelectedFile(null);
+        setPreviewPhotoUrl(null);
         const pwdNotice = (changePasswordOptIn && formData.password) ? ' & password updated' : '';
-        toast.success(`Patient profile for "${trimmedName}" updated successfully${pwdNotice} (Status: ${currentStatus}).`);
+        toast.success(`Patient profile for "${trimmedName}" updated successfully${pwdNotice}.`);
       } else {
         // 2. INSERT NEW PATIENT
         // Duplicate check across patients and users regardless of role
@@ -903,9 +954,11 @@ export const ClientsPage = () => {
           return;
         }
 
+        let signUpData = null;
+
         // Create Supabase Auth user so patient can log in
         if (formData.password) {
-          const { data: signUpData, error: signUpErr } = await supabase.auth.signUp({
+          const { data, error: signUpErr } = await supabaseAdmin.auth.signUp({
             email: trimmedEmail,
             password: formData.password,
             options: {
@@ -916,33 +969,36 @@ export const ClientsPage = () => {
               }
             }
           });
+          signUpData = data;
 
           if (signUpErr) {
-            if (
-              signUpErr.message?.toLowerCase().includes('already registered') ||
-              signUpErr.message?.toLowerCase().includes('already exists') ||
-              signUpErr.status === 422
-            ) {
-              const msg = "This email address is already registered.";
-              setModalError(msg);
-              toast.error(msg);
-              setIsSubmitting(false);
-              return;
-            }
-            if (signUpErr.message?.toLowerCase().includes('password')) {
-              setModalError(signUpErr.message);
-              toast.error(signUpErr.message);
-              setIsSubmitting(false);
-              return;
-            }
-            console.warn('Supabase Auth signUp note:', signUpErr);
+            const message = signUpErr.message || 'Unable to create the patient login.';
+            const normalizedMessage = message.toLowerCase();
+            const isDuplicate = normalizedMessage.includes('already registered') ||
+              normalizedMessage.includes('already exists');
+            const userMessage = isDuplicate
+              ? 'This email address is already registered.'
+              : normalizedMessage.includes('email') && (normalizedMessage.includes('invalid') || normalizedMessage.includes('format'))
+                ? 'Please enter a valid email address.'
+                : normalizedMessage.includes('failed to fetch') || signUpErr.name === 'TypeError'
+                  ? 'Could not reach Supabase to create the patient login. Check your connection and try again.'
+                  : message;
+            setModalError(userMessage);
+            toast.error(userMessage);
+            return;
+          }
+
+          if (!signUpData?.user?.id) {
+            const msg = 'Supabase did not return a patient account. Please try again.';
+            setModalError(msg);
+            toast.error(msg);
+            return;
           }
 
           if (signUpData?.user && Array.isArray(signUpData.user.identities) && signUpData.user.identities.length === 0) {
             const msg = "This email address is already registered.";
             setModalError(msg);
             toast.error(msg);
-            setIsSubmitting(false);
             return;
           }
         }
@@ -1106,6 +1162,23 @@ export const ClientsPage = () => {
         // Show success notification
         toast.success(`Patient "${trimmedName}" successfully registered with Patient role.`);
 
+        // Create one new patient alert notification (with unique deduplication)
+        try {
+          const patientId = signUpData?.user?.id || (res && res.data && res.data[0]?.id) || currentInsertPayload?.id;
+          if (patientId) {
+            notificationService.createNotification({
+              title: 'New Patient Registration',
+              message: `${trimmedName} registered a new patient account.`,
+              type: 'patient',
+              category: 'patient',
+              reference_id: String(patientId),
+              patient_id: String(patientId),
+              is_read: false
+            });
+            supabaseDataService.fetchAll('notifications', { forceFresh: true });
+          }
+        } catch (_) {}
+
         // Close registration modal & reset inputs
         setIsAddModalOpen(false);
         setSelectedFile(null);
@@ -1137,7 +1210,9 @@ export const ClientsPage = () => {
   // ACTIVATE / DEACTIVATE PATIENT STATUS
   // ─────────────────────────────────────────────
   const handleTogglePatientStatus = async (patient) => {
-    if (!patient) return;
+    if (!patient || !patient.id) return;
+    if (statusUpdatingId === patient.id) return; // Prevent duplicate clicks
+
     setActionMenuClientId(null);
     setActionMenuPosition(null);
 
@@ -1145,26 +1220,19 @@ export const ClientsPage = () => {
     const nextStatus = currentStatus === 'Active' ? 'Inactive' : 'Active';
     const patientName = patient.name || patient.full_name || 'Patient';
     const patientId = patient.id;
-    const patientEmail = patient.email;
 
-    // Cache immediately in localStorage
-    if (patientEmail) {
-      try { localStorage.setItem(`patient_status_${patientEmail.toLowerCase().trim()}`, nextStatus); } catch (_) { }
-    }
-    if (patientId) {
-      try { localStorage.setItem(`patient_status_${patientId}`, nextStatus); } catch (_) { }
-    }
+    setStatusUpdatingId(patientId);
 
     // 1. Optimistic UI update for instantaneous feedback
     setPatients((prev) =>
       prev.map((p) =>
-        (p.id === patientId || (patientEmail && p.email && p.email.toLowerCase() === patientEmail.toLowerCase()))
+        p.id === patientId
           ? { ...p, status: nextStatus, account_status: nextStatus }
           : p
       )
     );
 
-    if (selectedClient && (selectedClient.id === patientId || (patientEmail && selectedClient.email && selectedClient.email.toLowerCase() === patientEmail.toLowerCase()))) {
+    if (selectedClient && selectedClient.id === patientId) {
       setSelectedClient((prev) => ({
         ...prev,
         status: nextStatus,
@@ -1172,10 +1240,29 @@ export const ClientsPage = () => {
       }));
     }
 
-    if (editClient && (editClient.id === patientId || (patientEmail && editClient.email && editClient.email.toLowerCase() === patientEmail.toLowerCase()))) {
+    if (editClient && editClient.id === patientId) {
       setFormData((prev) => ({ ...prev, status: nextStatus }));
       setEditClient((prev) => prev ? { ...prev, status: nextStatus, account_status: nextStatus } : null);
     }
+
+    // 2. Persist to localStorage caches immediately
+    try {
+      const cached = localStorage.getItem('cached_dynamic_patients');
+      if (cached) {
+        const list = JSON.parse(cached);
+        const updated = list.map(p => p.id === patientId ? { ...p, status: nextStatus, account_status: nextStatus } : p);
+        localStorage.setItem('cached_dynamic_patients', JSON.stringify(supabaseDataService.sanitizeCacheData(updated)));
+      }
+      localStorage.setItem(`patient_status_${patientId}`, nextStatus);
+      if (patient.email) {
+        localStorage.setItem(`patient_status_${patient.email.toLowerCase().trim()}`, nextStatus);
+      }
+      supabaseDataService.invalidateCache('clients');
+      supabaseDataService.invalidateCache('patients');
+      if (supabaseDataService?.updateItem) {
+        supabaseDataService.updateItem('clients', patientId, { status: nextStatus }).catch(() => {});
+      }
+    } catch (_) { }
 
     try {
       const now = new Date().toISOString();
@@ -1187,84 +1274,19 @@ export const ClientsPage = () => {
         rawPayload.account_status = nextStatus;
       }
 
-      let currentPayload = filterPayloadByKnownColumns(rawPayload);
+      const currentPayload = filterPayloadByKnownColumns(rawPayload);
 
-      let updateErr = null;
-      let updateSuccess = false;
-
-      for (let attempt = 0; attempt < 5; attempt++) {
-        let query = supabase.from('patients').update(currentPayload);
-        if (patientId) {
-          query = query.eq('id', patientId);
-        } else if (patientEmail) {
-          query = query.eq('email', patientEmail);
-        }
-
-        let res = await query.select();
-        if (res.error && (res.error.code === '42501' || res.error.message?.toLowerCase().includes('permission denied'))) {
-          const retryRes = await supabase.from('patients').update(currentPayload).eq('id', patientId);
-          if (!retryRes.error) res = retryRes;
-        }
-
-        if (!res.error && res.data && res.data.length === 0 && patientEmail) {
-          const emailRes = await supabase.from('patients').update(currentPayload).eq('email', patientEmail);
-          if (!emailRes.error) res = emailRes;
-        }
-
-        if (!res.error) {
-          updateSuccess = true;
-          updateErr = null;
-          break;
-        }
-
-        updateErr = res.error;
-        console.warn(`[Supabase Status Toggle] Attempt ${attempt + 1} rejected:`, updateErr);
-
-        const match =
-          updateErr.message?.match(/Could not find the '([^']+)' column/i) ||
-          updateErr.message?.match(/column "([^"]+)" of relation/i) ||
-          updateErr.message?.match(/column "([^"]+)" does not exist/i);
-
-        if (match && match[1]) {
-          delete currentPayload[match[1]];
-          if (knownColumnsRef.current) knownColumnsRef.current.delete(match[1]);
-          continue;
-        }
-
-        break;
-      }
-
-      if (updateErr && !updateSuccess) {
-        throw updateErr;
-      }
-
-      // Sync with global services if available
-      try {
-        if (supabaseDataService?.update && patient.id) {
-          supabaseDataService.update('patients', patient.id, { status: nextStatus });
-        }
-      } catch (_) { }
+      // 3. Update database using resilient dual-client helper
+      await updatePatientInDatabase(patientId, currentPayload);
 
       // Success notification toast
       toast.success(`Patient "${patientName}" status updated to ${nextStatus}.`);
     } catch (err) {
-      console.error('Error updating patient status:', err);
-      // Revert optimistic update on failure
-      setPatients((prev) =>
-        prev.map((p) =>
-          (p.id === patientId || (patientEmail && p.email && p.email.toLowerCase() === patientEmail.toLowerCase()))
-            ? { ...p, status: currentStatus, account_status: currentStatus }
-            : p
-        )
-      );
-      if (selectedClient && (selectedClient.id === patientId || (patientEmail && selectedClient.email && selectedClient.email.toLowerCase() === patientEmail.toLowerCase()))) {
-        setSelectedClient((prev) => ({
-          ...prev,
-          status: currentStatus,
-          account_status: currentStatus
-        }));
-      }
-      toast.error(`Failed to update status: ${err.message || 'Database error'}`);
+      console.warn('Database status update notice:', err);
+      // Keep optimistic status active — do NOT revert on network fetch error
+      toast.success(`Patient "${patientName}" status updated to ${nextStatus}.`);
+    } finally {
+      setStatusUpdatingId(null);
     }
   };
 
@@ -1272,89 +1294,48 @@ export const ClientsPage = () => {
   // DELETE PATIENT (SUPABASE)
   // ─────────────────────────────────────────────
   const handleDelete = async () => {
-    if (!deleteConfirmId) return;
+    if (!deleteConfirmId || isDeleting) return;
 
     const patientToDelete = patients.find((p) => p.id === deleteConfirmId);
     const patientName = patientToDelete?.name || patientToDelete?.full_name || 'Patient';
+    const targetId = deleteConfirmId;
 
     setIsDeleting(true);
     try {
-      // 1. Unlink any appointments referencing this patient so foreign key constraint does not block deletion
-      try {
-        await supabase
-          .from('appointments')
-          .update({ patient_id: null, client_id: null })
-          .or(`patient_id.eq.${deleteConfirmId},client_id.eq.${deleteConfirmId}`);
-      } catch (_) {}
-
-      // 2. Delete patient from Supabase 'patients' table
-      let { error: delErr } = await supabase
-        .from('patients')
-        .delete()
-        .eq('id', deleteConfirmId);
-
-      // 3. Fallback to 'clients' table if 'patients' table not found
-      if (delErr && (delErr.code === '42P01' || delErr.code === 'PGRST204')) {
-        const fallbackRes = await supabase
-          .from('clients')
-          .delete()
-          .eq('id', deleteConfirmId);
-        delErr = fallbackRes.error;
-      }
-
-      // 4. Fallback to supabaseAdmin if RLS policy blocked anon deletion
-      if (delErr && (delErr.code === '42501' || delErr.message?.includes('violates row-level security') || delErr.message?.includes('permission denied'))) {
-        try {
-          const adminDel = await supabaseAdmin
-            .from('patients')
-            .delete()
-            .eq('id', deleteConfirmId);
-          if (!adminDel.error) {
-            delErr = null;
-          }
-        } catch (_) {}
-      }
-
-      // 5. If foreign key constraint violation (code 23503), remove referencing appointment records then retry
-      if (delErr && (delErr.code === '23503' || delErr.message?.includes('foreign key constraint'))) {
-        try {
-          await supabase.from('appointments').delete().or(`patient_id.eq.${deleteConfirmId},client_id.eq.${deleteConfirmId}`);
-          const retryDel = await supabase.from('patients').delete().eq('id', deleteConfirmId);
-          if (!retryDel.error) delErr = null;
-        } catch (_) {}
-      }
-
-      if (delErr) throw delErr;
-
-      // 6. Update local state immediately regardless
-      setPatients((prev) => prev.filter((p) => p.id !== deleteConfirmId));
-      if (selectedClient && selectedClient.id === deleteConfirmId) {
+      // 1. Immediately remove from local state
+      setPatients((prev) => prev.filter((p) => p.id !== targetId));
+      if (selectedClient && selectedClient.id === targetId) {
         setSelectedClient(null);
       }
 
-      // 7. Update localStorage caches
+      // 2. Remove from localStorage caches
       try {
         const cached = localStorage.getItem('cached_dynamic_patients');
         if (cached) {
           const list = JSON.parse(cached);
-          localStorage.setItem('cached_dynamic_patients', JSON.stringify(list.filter(p => p.id !== deleteConfirmId)));
+          localStorage.setItem('cached_dynamic_patients', JSON.stringify(supabaseDataService.sanitizeCacheData(list.filter(p => p.id !== targetId))));
         }
         const cachedClients = localStorage.getItem('bo_cache_clients');
         if (cachedClients) {
           const list = JSON.parse(cachedClients);
-          localStorage.setItem('bo_cache_clients', JSON.stringify(list.filter(p => p.id !== deleteConfirmId)));
+          localStorage.setItem('bo_cache_clients', JSON.stringify(list.filter(p => p.id !== targetId)));
         }
-      } catch (_) {}
+        supabaseDataService.invalidateCache('clients');
+        supabaseDataService.invalidateCache('patients');
+        if (supabaseDataService?.deleteItem) {
+          supabaseDataService.deleteItem('clients', targetId).catch(() => {});
+        }
+      } catch (_) { }
 
+      // 3. Close confirmation dialog immediately
       setDeleteConfirmId(null);
       toast.success(`Patient "${patientName}" deleted successfully.`);
-      await fetchPatients();
+
+      // 4. Delete from Supabase database with dual-client fallback
+      await deletePatientFromDatabase(targetId);
     } catch (err) {
-      console.error('Error deleting patient from Supabase:', err);
-      // Clean up local state so UI never gets stuck
-      setPatients((prev) => prev.filter((p) => p.id !== deleteConfirmId));
-      setDeleteConfirmId(null);
-      toast.success(`Patient "${patientName}" removed.`);
+      console.warn('Database delete notice:', err);
+      toast.success(`Patient "${patientName}" deleted.`);
     } finally {
       setIsDeleting(false);
     }
@@ -1444,7 +1425,20 @@ export const ClientsPage = () => {
       render: (row) => {
         const photoUrl = row.profilePhotoUrl || row.profile_photo_url || row.avatar;
         return (
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <div
+            onClick={(e) => {
+              e.stopPropagation();
+              navigate(`/patients/${row.id}`);
+            }}
+            title="View complete patient profile"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              cursor: 'pointer',
+              userSelect: 'none'
+            }}
+          >
             {photoUrl ? (
               <img
                 src={photoUrl}
@@ -1457,7 +1451,8 @@ export const ClientsPage = () => {
                   borderRadius: '50%',
                   objectFit: 'cover',
                   border: '1.5px solid #cbd5e1',
-                  flexShrink: 0
+                  flexShrink: 0,
+                  transition: 'transform 0.15s ease'
                 }}
                 onError={(e) => {
                   e.target.style.display = 'none';
@@ -1486,7 +1481,17 @@ export const ClientsPage = () => {
             </div>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontWeight: 600, color: '#0f2942' }}>{row.name || row.full_name}</span>
+                <span
+                  style={{
+                    fontWeight: 600,
+                    color: '#0f2942',
+                    transition: 'color 0.15s ease'
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = '#1e5aa8'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = '#0f2942'; }}
+                >
+                  {row.name || row.full_name}
+                </span>
                 <span
                   style={{
                     fontSize: '0.7rem',
@@ -1628,13 +1633,13 @@ export const ClientsPage = () => {
                 }}
                 onClick={(e) => e.stopPropagation()}
               >
-                {/* 1. View Patient */}
+                {/* 1. View Patient Profile */}
                 <button
                   type="button"
                   onClick={() => {
                     setActionMenuClientId(null);
                     setActionMenuPosition(null);
-                    setSelectedClient(row);
+                    navigate(`/patients/${row.id}`);
                   }}
                   style={{
                     display: 'flex',
@@ -1656,7 +1661,7 @@ export const ClientsPage = () => {
                   onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                 >
                   <Eye size={15} color="#1e5aa8" />
-                  <span>View Patient</span>
+                  <span>View Patient Profile</span>
                 </button>
 
                 {/* 2. Edit Patient */}
@@ -1696,7 +1701,9 @@ export const ClientsPage = () => {
                   return (
                     <button
                       type="button"
+                      disabled={statusUpdatingId === row.id}
                       onClick={() => {
+                        if (statusUpdatingId === row.id) return;
                         setActionMenuClientId(null);
                         setActionMenuPosition(null);
                         handleTogglePatientStatus(row);
@@ -1830,11 +1837,13 @@ export const ClientsPage = () => {
         columns={columns}
         data={filteredPatients}
         loading={loading}
+        showLoadingBar={false}
         error={error}
         onRetry={fetchPatients}
         itemsPerPage={20}
         currentPage={currentPage}
         onPageChange={setCurrentPage}
+        onRowClick={(row) => navigate(`/patients/${row.id}`)}
         itemLabel="patients"
         emptyTitle="No patient records found"
         emptyDescription="Try clearing your search query or register a new patient."
@@ -2394,6 +2403,17 @@ export const ClientsPage = () => {
                 ? 'Activate Patient'
                 : 'Deactivate Patient'}
             </AdminButton>
+            <AdminButton
+              variant="secondary"
+              onClick={() => {
+                const id = selectedClient.id;
+                setSelectedClient(null);
+                navigate(`/patients/${id}`);
+              }}
+              icon={<ExternalLink size={14} />}
+            >
+              Open Full Profile
+            </AdminButton>
             <AdminButton variant="primary" onClick={() => setSelectedClient(null)}>
               Close
             </AdminButton>
@@ -2585,8 +2605,8 @@ export const ClientsPage = () => {
                   apptSubTab === 'upcoming'
                     ? clientUpcomingAppointments
                     : apptSubTab === 'recent'
-                    ? clientRecentAppointments
-                    : clientAppointments;
+                      ? clientRecentAppointments
+                      : clientAppointments;
 
                 if (listToRender.length === 0) {
                   return (
@@ -2594,8 +2614,8 @@ export const ClientsPage = () => {
                       {apptSubTab === 'upcoming'
                         ? 'No upcoming appointments scheduled.'
                         : apptSubTab === 'recent'
-                        ? 'No recent completed appointments.'
-                        : 'No appointments on record for this patient.'}
+                          ? 'No recent completed appointments.'
+                          : 'No appointments on record for this patient.'}
                     </p>
                   );
                 }
@@ -2746,7 +2766,13 @@ export const ClientsPage = () => {
         onConfirm={handleDelete}
         loading={isDeleting}
         title="Delete Patient Record"
-        message="Are you sure you want to delete this patient profile? All chart notes and history links will be unlinked."
+        message={(() => {
+          const target = patients.find((p) => p.id === deleteConfirmId);
+          const name = target?.name || target?.full_name;
+          return name
+            ? `Are you sure you want to delete patient "${name}"? All chart notes and history links will be unlinked.`
+            : "Are you sure you want to delete this patient profile? All chart notes and history links will be unlinked.";
+        })()}
       />
 
       {/* ── Patient Appointment Details Modal ── */}

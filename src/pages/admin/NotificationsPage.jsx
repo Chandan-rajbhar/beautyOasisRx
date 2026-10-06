@@ -1,35 +1,179 @@
-import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Bell,
-  Check,
   CheckCheck,
   Calendar,
   ShoppingBag,
   CreditCard,
   MessageSquare,
   ExternalLink,
-  Trash2
+  Trash2,
+  User
 } from 'lucide-react';
 import { useAdminData } from '../../context/AdminDataContext';
 import { AdminButton } from '../../components/admin/ui/AdminButton';
-import { AdminBadge } from '../../components/admin/ui/AdminBadge';
+import { supabase } from '../../lib/supabaseClient';
+import { supabaseDataService } from '../../services/supabaseDataService';
+import {
+  notificationService,
+  getNotificationRoute,
+  formatTimestamp,
+  normalizeNotification,
+  isStaticNotification,
+  deduplicateNotifications
+} from '../../services/notificationService';
 
 export const NotificationsPage = () => {
-  const { notifications, markNotificationAsRead, markAllNotificationsAsRead, deleteItem } = useAdminData();
-  const [filterType, setFilterType] = useState('ALL');
+  const {
+    notifications = [],
+    markNotificationAsRead,
+    markAllNotificationsAsRead,
+    deleteItem,
+    isLoading: contextLoading
+  } = useAdminData();
 
-  const filteredNotifications = notifications.filter((notif) => {
-    if (filterType === 'UNREAD') return !notif.read;
-    if (filterType === 'APPOINTMENTS') return notif.type === 'appointment';
-    if (filterType === 'ORDERS') return notif.type === 'order';
-    if (filterType === 'PAYMENTS') return notif.type === 'payment';
-    if (filterType === 'INQUIRIES') return notif.type === 'inquiry';
-    return true;
+  const navigate = useNavigate();
+  const [filterType, setFilterType] = useState('ALL');
+  const [localNotifications, setLocalNotifications] = useState(() => {
+    let list = [];
+    if (Array.isArray(notifications)) list = notifications;
+    else {
+      try {
+        const cached = localStorage.getItem('bo_cache_notifications');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed)) list = parsed;
+        }
+      } catch (_) {}
+    }
+    return deduplicateNotifications(list.filter(n => !isStaticNotification(n)));
   });
 
+  // Keep local list in sync with context
+  useEffect(() => {
+    if (Array.isArray(notifications)) {
+      setLocalNotifications(deduplicateNotifications(notifications.filter(n => !isStaticNotification(n))));
+    }
+  }, [notifications]);
+
+  // Initial fetch from Supabase and synchronize across entire admin layout
+  useEffect(() => {
+    let isMounted = true;
+    async function loadNotifications() {
+      try {
+        const data = await notificationService.fetchNotifications();
+        if (isMounted && Array.isArray(data)) {
+          setLocalNotifications(deduplicateNotifications(data));
+          supabaseDataService.fetchAll('notifications', { forceFresh: true });
+        }
+      } catch (err) {
+        console.warn('Initial notifications fetch warning:', err);
+      }
+    }
+    loadNotifications();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  // Real-time Supabase postgres subscription for live notification updates
+  useEffect(() => {
+    const channelName = `notif_feed_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+    const channel = supabase
+      .channel(channelName)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'notifications' },
+        async () => {
+          try {
+            const fresh = await supabaseDataService.fetchAll('notifications', { forceFresh: true });
+            if (Array.isArray(fresh)) {
+              setLocalNotifications(deduplicateNotifications(fresh));
+            }
+          } catch (_) {
+            const fallback = await notificationService.fetchNotifications();
+            if (Array.isArray(fallback)) {
+              setLocalNotifications(deduplicateNotifications(fallback));
+            }
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      try {
+        supabase.removeChannel(channel);
+      } catch (_) {}
+    };
+  }, []);
+
+  // Filter notifications by active tab category
+  const filteredNotifications = useMemo(() => {
+    return localNotifications.filter((notif) => {
+      const type = (notif.type || notif.category || '').toLowerCase();
+      const category = (notif.category || notif.type || '').toLowerCase();
+      const isUnread = !notif.is_read && !notif.read;
+
+      if (filterType === 'UNREAD') return isUnread;
+      if (filterType === 'APPOINTMENTS') return category === 'appointment' || type === 'appointment';
+      if (filterType === 'ORDERS') return category === 'order' || type === 'order';
+      if (filterType === 'PAYMENTS') return category === 'payment' || type === 'payment';
+      if (filterType === 'INQUIRIES') return category === 'inquiry' || type === 'inquiry' || category === 'ticket' || type === 'ticket';
+      return true;
+    });
+  }, [localNotifications, filterType]);
+
+  const unreadCount = useMemo(() => {
+    return localNotifications.filter((n) => !n.is_read && !n.read).length;
+  }, [localNotifications]);
+
+  // Handle Mark Single Notification Read & Dynamic Navigation
+  const handleNotificationClick = async (notif) => {
+    const isUnread = !notif.is_read && !notif.read;
+    if (isUnread) {
+      setLocalNotifications((prev) =>
+        prev.map((n) => (n.id === notif.id ? { ...n, is_read: true, read: true } : n))
+      );
+      try {
+        await markNotificationAsRead(notif.id);
+      } catch (_) {
+        await notificationService.markAsRead(notif.id);
+      }
+    }
+
+    const route = getNotificationRoute(notif);
+    if (route && route.path) {
+      navigate(route.path, { state: route.state });
+    }
+  };
+
+  // Handle Mark All as Read
+  const handleMarkAllAsRead = async () => {
+    setLocalNotifications((prev) =>
+      prev.map((n) => ({ ...n, is_read: true, read: true }))
+    );
+    try {
+      await markAllNotificationsAsRead();
+    } catch (_) {
+      await notificationService.markAllAsRead();
+    }
+  };
+
+  // Handle Dismiss / Delete Notification
+  const handleDeleteNotification = async (notifId, e) => {
+    e.stopPropagation();
+    setLocalNotifications((prev) => prev.filter((n) => n.id !== notifId));
+    try {
+      await deleteItem('notifications', notifId);
+    } catch (_) {
+      await notificationService.deleteNotification(notifId);
+    }
+  };
+
   const getTypeIcon = (type) => {
-    switch (type) {
+    const t = String(type || '').toLowerCase();
+    switch (t) {
       case 'appointment':
         return <Calendar size={18} color="#1e5aa8" />;
       case 'order':
@@ -37,7 +181,11 @@ export const NotificationsPage = () => {
       case 'payment':
         return <CreditCard size={18} color="#0284c7" />;
       case 'inquiry':
+      case 'ticket':
         return <MessageSquare size={18} color="#eab308" />;
+      case 'patient':
+      case 'client':
+        return <User size={18} color="#7c3aed" />;
       default:
         return <Bell size={18} color="#1e5aa8" />;
     }
@@ -54,7 +202,7 @@ export const NotificationsPage = () => {
         <div className="admin-page-actions">
           <AdminButton
             variant="secondary"
-            onClick={markAllNotificationsAsRead}
+            onClick={handleMarkAllAsRead}
             icon={<CheckCheck size={16} />}
           >
             Mark All as Read
@@ -65,8 +213,8 @@ export const NotificationsPage = () => {
       {/* Filter Tabs */}
       <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid #e2e8f0', marginBottom: '20px', flexWrap: 'wrap' }}>
         {[
-          { id: 'ALL', label: `All Updates (${notifications.length})` },
-          { id: 'UNREAD', label: `Unread (${notifications.filter(n => !n.read).length})` },
+          { id: 'ALL', label: `All Updates (${localNotifications.length})` },
+          { id: 'UNREAD', label: `Unread (${unreadCount})` },
           { id: 'APPOINTMENTS', label: 'Appointments' },
           { id: 'ORDERS', label: 'Orders' },
           { id: 'PAYMENTS', label: 'Payments' },
@@ -94,75 +242,81 @@ export const NotificationsPage = () => {
       {/* Notifications List */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
         {filteredNotifications.length > 0 ? (
-          filteredNotifications.map((notif) => (
-            <div
-              key={notif.id}
-              onClick={() => markNotificationAsRead(notif.id)}
-              style={{
-                background: notif.read ? '#ffffff' : '#f0fdf4',
-                border: notif.read ? '1px solid #e2e8f0' : '1px solid #86efac',
-                borderRadius: '12px',
-                padding: '16px 20px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: '16px',
-                transition: 'all 0.2s ease',
-                cursor: 'pointer'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1 }}>
-                <div
-                  style={{
-                    width: '40px',
-                    height: '40px',
-                    borderRadius: '10px',
-                    background: '#ffffff',
-                    border: '1px solid #e2e8f0',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    flexShrink: 0
-                  }}
-                >
-                  {getTypeIcon(notif.type)}
-                </div>
-
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
-                    <span style={{ fontWeight: 700, color: '#0f2942', fontSize: '0.9rem' }}>
-                      {notif.title}
-                    </span>
-                    {!notif.read && (
-                      <span
-                        style={{
-                          background: '#15803d',
-                          color: '#ffffff',
-                          fontSize: '0.62rem',
-                          fontWeight: 700,
-                          padding: '2px 6px',
-                          borderRadius: '9999px',
-                          textTransform: 'uppercase'
-                        }}
-                      >
-                        New
-                      </span>
-                    )}
+          filteredNotifications.map((notif) => {
+            const isRead = Boolean(notif.is_read || notif.read);
+            const timeText = notif.timestamp || (notif.created_at ? formatTimestamp(notif.created_at) : 'Just now');
+            return (
+              <div
+                key={notif.id}
+                onClick={() => handleNotificationClick(notif)}
+                style={{
+                  background: isRead ? '#ffffff' : '#f0fdf4',
+                  border: isRead ? '1px solid #e2e8f0' : '1px solid #86efac',
+                  borderRadius: '12px',
+                  padding: '16px 20px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: '16px',
+                  transition: 'all 0.2s ease',
+                  cursor: 'pointer'
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1 }}>
+                  <div
+                    style={{
+                      width: '40px',
+                      height: '40px',
+                      borderRadius: '10px',
+                      background: '#ffffff',
+                      border: '1px solid #e2e8f0',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0
+                    }}
+                  >
+                    {getTypeIcon(notif.type || notif.category)}
                   </div>
-                  <p style={{ margin: 0, fontSize: '0.84rem', color: '#475569' }}>
-                    {notif.message}
-                  </p>
+
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
+                      <span style={{ fontWeight: 700, color: '#0f2942', fontSize: '0.9rem' }}>
+                        {notif.title}
+                      </span>
+                      {!isRead && (
+                        <span
+                          style={{
+                            background: '#15803d',
+                            color: '#ffffff',
+                            fontSize: '0.62rem',
+                            fontWeight: 700,
+                            padding: '2px 6px',
+                            borderRadius: '9999px',
+                            textTransform: 'uppercase'
+                          }}
+                        >
+                          New
+                        </span>
+                      )}
+                    </div>
+                    <p style={{ margin: 0, fontSize: '0.84rem', color: '#475569' }}>
+                      {notif.message}
+                    </p>
+                  </div>
                 </div>
-              </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexShrink: 0 }}>
-                <span style={{ fontSize: '0.78rem', color: '#94a3b8' }}>
-                  {notif.timestamp}
-                </span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexShrink: 0 }}>
+                  <span style={{ fontSize: '0.78rem', color: '#94a3b8' }}>
+                    {timeText}
+                  </span>
 
-                {notif.link && (
-                  <Link
-                    to={notif.link}
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleNotificationClick(notif);
+                    }}
                     style={{
                       background: '#f8fafc',
                       border: '1px solid #cbd5e1',
@@ -171,35 +325,32 @@ export const NotificationsPage = () => {
                       fontSize: '0.78rem',
                       fontWeight: 600,
                       color: '#1e5aa8',
-                      textDecoration: 'none',
+                      cursor: 'pointer',
                       display: 'flex',
                       alignItems: 'center',
                       gap: '4px'
                     }}
                   >
                     View <ExternalLink size={12} />
-                  </Link>
-                )}
+                  </button>
 
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    deleteItem('notifications', notif.id);
-                  }}
-                  title="Dismiss notification"
-                  style={{
-                    background: 'transparent',
-                    border: 'none',
-                    color: '#94a3b8',
-                    cursor: 'pointer',
-                    padding: '4px'
-                  }}
-                >
-                  <Trash2 size={16} />
-                </button>
+                  <button
+                    onClick={(e) => handleDeleteNotification(notif.id, e)}
+                    title="Dismiss notification"
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#94a3b8',
+                      cursor: 'pointer',
+                      padding: '4px'
+                    }}
+                  >
+                    <Trash2 size={16} />
+                  </button>
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         ) : (
           <div style={{ padding: '60px', textAlign: 'center', color: '#64748b' }}>
             No notifications found in this category.
@@ -209,3 +360,5 @@ export const NotificationsPage = () => {
     </div>
   );
 };
+
+export default NotificationsPage;

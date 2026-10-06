@@ -56,47 +56,13 @@ export const DEFAULT_CLINICAL_DURATIONS = [
   '120 Mins'
 ];
 
-export const DURATION_OPTIONS = DEFAULT_CLINICAL_DURATIONS.map(d => ({ value: d, label: d }));
+const DURATION_OPTIONS = DEFAULT_CLINICAL_DURATIONS.map(d => ({ value: d, label: d }));
 
-export const parseMinutesFromLabel = (label) => {
+const parseMinutesFromLabel = (label) => {
   const match = String(label).match(/\d+/);
   return match ? parseInt(match[0], 10) : 0;
 };
 
-export const APPOINTMENT_TIME_OPTIONS = [
-  { value: '08:00 AM', label: '08:00 AM' },
-  { value: '08:30 AM', label: '08:30 AM' },
-  { value: '09:00 AM', label: '09:00 AM' },
-  { value: '09:30 AM', label: '09:30 AM' },
-  { value: '10:00 AM', label: '10:00 AM' },
-  { value: '10:30 AM', label: '10:30 AM' },
-  { value: '11:00 AM', label: '11:00 AM' },
-  { value: '11:30 AM', label: '11:30 AM' },
-  { value: '12:00 PM', label: '12:00 PM' },
-  { value: '12:30 PM', label: '12:30 PM' },
-  { value: '01:00 PM', label: '01:00 PM' },
-  { value: '01:30 PM', label: '01:30 PM' },
-  { value: '02:00 PM', label: '02:00 PM' },
-  { value: '02:30 PM', label: '02:30 PM' },
-  { value: '03:00 PM', label: '03:00 PM' },
-  { value: '03:30 PM', label: '03:30 PM' },
-  { value: '04:00 PM', label: '04:00 PM' },
-  { value: '04:30 PM', label: '04:30 PM' },
-  { value: '05:00 PM', label: '05:00 PM' },
-  { value: '05:30 PM', label: '05:30 PM' },
-  { value: '06:00 PM', label: '06:00 PM' },
-  { value: '06:30 PM', label: '06:30 PM' },
-  { value: '07:00 PM', label: '07:00 PM' }
-];
-
-export const formatDateDisplay = (dateStr) => {
-  if (!dateStr) return '—';
-  if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
-    const [y, m, d] = dateStr.split('-');
-    return `${m}/${d}/${y}`;
-  }
-  return dateStr;
-};
 
 const DEFAULT_FORM = {
   protocol_title: '',
@@ -105,11 +71,10 @@ const DEFAULT_FORM = {
   price: '',
   duration: '60 Mins',
   status: 'Active',
-  appointment_date: new Date().toISOString().split('T')[0],
-  appointment_time: '10:30 AM',
   tagline: '',
   clinical_description: ''
 };
+
 
 export const ServicesPage = () => {
   // Global admin context for cross-module sync
@@ -443,8 +408,7 @@ export const ServicesPage = () => {
       ...DEFAULT_FORM,
       category: firstCat,
       category_id: categories[0]?.id || '',
-      duration: firstDur,
-      appointment_date: new Date().toISOString().split('T')[0]
+      duration: firstDur
     });
     setFormErrors({});
     setEditingTreatment(null);
@@ -459,8 +423,6 @@ export const ServicesPage = () => {
       price: treatment.price ? String(treatment.price) : '',
       duration: treatment.duration || '60 Mins',
       status: treatment.status || 'Active',
-      appointment_date: treatment.appointment_date || new Date().toISOString().split('T')[0],
-      appointment_time: treatment.appointment_time || '10:30 AM',
       tagline: treatment.tagline || '',
       clinical_description: treatment.clinical_description || treatment.description || ''
     });
@@ -498,12 +460,6 @@ export const ServicesPage = () => {
     if (!formData.status) {
       errors.status = 'Status is required.';
     }
-    if (!formData.appointment_date) {
-      errors.appointment_date = 'Appointment date is required.';
-    }
-    if (!formData.appointment_time) {
-      errors.appointment_time = 'Appointment time is required.';
-    }
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   };
@@ -526,8 +482,6 @@ export const ServicesPage = () => {
       price: numPrice,
       duration: formData.duration.trim(),
       status: formData.status,
-      appointment_date: formData.appointment_date,
-      appointment_time: formData.appointment_time,
       tagline: formData.tagline?.trim() || null,
       clinical_description: formData.clinical_description?.trim() || null,
       updated_at: new Date().toISOString()
@@ -565,8 +519,6 @@ export const ServicesPage = () => {
             price: `$${treatmentPayload.price}`,
             duration: treatmentPayload.duration,
             status: treatmentPayload.status,
-            appointment_date: treatmentPayload.appointment_date,
-            appointment_time: treatmentPayload.appointment_time,
             tagline: treatmentPayload.tagline,
             description: treatmentPayload.clinical_description
           };
@@ -626,8 +578,6 @@ export const ServicesPage = () => {
             price: `$${insertPayload.price}`,
             duration: insertPayload.duration,
             status: insertPayload.status,
-            appointment_date: insertPayload.appointment_date,
-            appointment_time: insertPayload.appointment_time,
             tagline: insertPayload.tagline,
             description: insertPayload.clinical_description,
             created_at: insertPayload.created_at
@@ -1089,26 +1039,7 @@ export const ServicesPage = () => {
         </div>
       )
     },
-    {
-      header: 'Appointment Date',
-      accessor: 'appointment_date',
-      sortable: true,
-      render: (row) => (
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '0.84rem', color: '#334155' }}>
-          <Calendar size={13} color="#94a3b8" />
-          <span>{formatDateDisplay(row.appointment_date)}</span>
-        </div>
-      )
-    },
-    {
-      header: 'Appointment Time',
-      accessor: 'appointment_time',
-      render: (row) => (
-        <div style={{ fontSize: '0.84rem', color: '#475569', fontWeight: 500 }}>
-          {row.appointment_time || '—'}
-        </div>
-      )
-    },
+
     {
       header: 'Status',
       accessor: 'status',
@@ -1313,6 +1244,9 @@ export const ServicesPage = () => {
         columns={columns}
         data={filteredTreatments}
         loading={loading}
+        showLoadingBar={false}
+        showSkeleton={false}
+        loadingMessage="Loading treatments..."
         itemsPerPage={20}
         itemLabel="treatment protocols"
         emptyTitle="No treatment protocols found"
@@ -1328,7 +1262,7 @@ export const ServicesPage = () => {
         isOpen={isDrawerOpen}
         onClose={handleCloseDrawer}
         title={editingTreatment ? "Edit Treatment Protocol" : "Add New Treatment Protocol"}
-        subtitle="Configure clinician credentials, protocol pricing, duration, and appointment timing."
+        subtitle="Configure clinician credentials, protocol pricing, and duration."
         width="660px"
         footer={
           <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', width: '100%' }}>
@@ -1528,8 +1462,8 @@ export const ServicesPage = () => {
               )}
             </div>
 
-            {/* Status * (Active / Inactive) */}
-            <div className="admin-form-group">
+          {/* Status * (Active / Inactive) — spans full row since Appointment Date removed */}
+            <div className="admin-form-group" style={{ gridColumn: '1 / -1' }}>
               <label className="admin-form-label">
                 Status <span style={{ color: '#dc2626' }}>*</span>
               </label>
@@ -1541,55 +1475,6 @@ export const ServicesPage = () => {
                   { label: 'Inactive', value: 'Inactive' }
                 ]}
               />
-            </div>
-
-            {/* Appointment Date * */}
-            <div className="admin-form-group">
-              <label className="admin-form-label">
-                Appointment Date <span style={{ color: '#dc2626' }}>*</span>
-              </label>
-              <input
-                type="date"
-                required
-                name="treatment_appointment_date"
-                autoComplete="off"
-                className={`admin-form-input ${formErrors.appointment_date ? 'error' : ''}`}
-                value={formData.appointment_date}
-                onChange={(e) => {
-                  setFormData({ ...formData, appointment_date: e.target.value });
-                  if (formErrors.appointment_date) {
-                    setFormErrors(prev => ({ ...prev, appointment_date: null }));
-                  }
-                }}
-              />
-              {formErrors.appointment_date && (
-                <div style={{ fontSize: '0.74rem', color: '#dc2626', marginTop: '4px' }}>
-                  {formErrors.appointment_date}
-                </div>
-              )}
-            </div>
-
-            {/* Appointment Time * (Custom 3-Column TimePicker) */}
-            <div className="admin-form-group">
-              <label className="admin-form-label">
-                Appointment Time <span style={{ color: '#dc2626' }}>*</span>
-              </label>
-              <TimePicker
-                value={formData.appointment_time}
-                onChange={(val) => {
-                  setFormData({ ...formData, appointment_time: val });
-                  if (formErrors.appointment_time) {
-                    setFormErrors(prev => ({ ...prev, appointment_time: null }));
-                  }
-                }}
-                placeholder="Select appointment time..."
-                error={Boolean(formErrors.appointment_time)}
-              />
-              {formErrors.appointment_time && (
-                <div style={{ fontSize: '0.74rem', color: '#dc2626', marginTop: '4px' }}>
-                  {formErrors.appointment_time}
-                </div>
-              )}
             </div>
           </div>
 
@@ -1719,7 +1604,7 @@ export const ServicesPage = () => {
             {/* Clinical Specifications */}
             <div style={{ background: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '18px' }}>
               <h4 style={{ margin: '0 0 14px 0', fontSize: '0.88rem', color: '#0f2942', fontWeight: 700 }}>
-                Appointment & Scheduling Parameters
+                Protocol Specifications
               </h4>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', fontSize: '0.84rem' }}>
                 <div>
@@ -1729,14 +1614,6 @@ export const ServicesPage = () => {
                 <div>
                   <span style={{ color: '#64748b', fontSize: '0.74rem', display: 'block' }}>Protocol Duration</span>
                   <span style={{ fontWeight: 600, color: '#0f2942' }}>{selectedTreatment.duration || '60 Mins'}</span>
-                </div>
-                <div>
-                  <span style={{ color: '#64748b', fontSize: '0.74rem', display: 'block' }}>Appointment Date</span>
-                  <span style={{ fontWeight: 600, color: '#0f2942' }}>{formatDateDisplay(selectedTreatment.appointment_date)}</span>
-                </div>
-                <div>
-                  <span style={{ color: '#64748b', fontSize: '0.74rem', display: 'block' }}>Appointment Time</span>
-                  <span style={{ fontWeight: 600, color: '#0f2942' }}>{selectedTreatment.appointment_time || '—'}</span>
                 </div>
               </div>
             </div>

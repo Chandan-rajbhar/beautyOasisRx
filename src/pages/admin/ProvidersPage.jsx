@@ -23,6 +23,7 @@ import {
 import toast from 'react-hot-toast';
 import { supabase } from '../../lib/supabaseClient';
 import { supabaseAdmin } from '../../lib/supabaseAdmin';
+import { supabaseDataService } from '../../services/supabaseDataService';
 import { AdminTable } from '../../components/admin/ui/AdminTable';
 import { AdminToolbar } from '../../components/admin/ui/AdminToolbar';
 import { AdminBadge } from '../../components/admin/ui/AdminBadge';
@@ -117,9 +118,9 @@ const DEFAULT_FORM = {
 
 const saveCliniciansToCache = (list) => {
   try {
-    localStorage.setItem('bo_clinicians_cache', JSON.stringify(list));
+    localStorage.setItem('bo_clinicians_cache', JSON.stringify(supabaseDataService.sanitizeCacheData(list)));
     // Keep supabaseDataService cache in sync so other parts of the app stay consistent
-    localStorage.setItem('bo_cache_clinicians', JSON.stringify(list));
+    localStorage.setItem('bo_cache_clinicians', JSON.stringify(supabaseDataService.sanitizeCacheData(list)));
   } catch (_) { }
 };
 
@@ -1160,6 +1161,9 @@ export const ProvidersPage = () => {
         columns={columns}
         data={filteredClinicians}
         loading={loading}
+        showLoadingBar={false}
+        showSkeleton={false}
+        loadingMessage="Loading providers..."
         error={error}
         onRetry={fetchClinicians}
         itemsPerPage={20}

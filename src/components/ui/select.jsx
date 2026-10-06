@@ -56,7 +56,8 @@ export const Select = ({
         onSelect: handleSelect,
         open,
         setOpen,
-        disabled
+        disabled,
+        containerRef
       }}
     >
       <div
@@ -105,11 +106,13 @@ export const SelectTrigger = ({
   );
 };
 
-export const SelectValue = ({ placeholder = 'Select an option...' }) => {
+export const SelectValue = ({ placeholder = 'Select an option...', children }) => {
   const { value } = useContext(SelectContext);
+  const display = children !== undefined && children !== null && children !== '' ? children : (value || placeholder);
+  const isPlaceholder = !value && (children === undefined || children === null || children === '');
   return (
-    <span className={`shadcn-select-value ${!value ? 'placeholder' : ''}`}>
-      {value || placeholder}
+    <span className={`shadcn-select-value ${isPlaceholder ? 'placeholder' : ''}`}>
+      {display}
     </span>
   );
 };
@@ -118,9 +121,23 @@ export const SelectContent = ({
   children,
   className = '',
   style = {},
-  align = 'start'
+  align = 'start',
+  side = 'auto' // 'auto' | 'bottom' | 'top'
 }) => {
-  const { open } = useContext(SelectContext);
+  const { open, containerRef } = useContext(SelectContext);
+  const [openAbove, setOpenAbove] = useState(false);
+
+  useEffect(() => {
+    if (open && containerRef?.current) {
+      const rect = containerRef.current.getBoundingClientRect();
+      const spaceBelow = window.innerHeight - rect.bottom - 8;
+      if (side === 'top' || (side === 'auto' && spaceBelow < 190 && rect.top > 190)) {
+        setOpenAbove(true);
+      } else {
+        setOpenAbove(false);
+      }
+    }
+  }, [open, containerRef, side]);
 
   if (!open) return null;
 
@@ -130,11 +147,13 @@ export const SelectContent = ({
       className={`shadcn-select-content ${className}`}
       style={{
         position: 'absolute',
-        top: 'calc(100% + 4px)',
+        top: openAbove ? 'auto' : 'calc(100% + 4px)',
+        bottom: openAbove ? 'calc(100% + 4px)' : 'auto',
         left: align === 'end' ? 'auto' : 0,
         right: align === 'end' ? 0 : 'auto',
         minWidth: '100%',
-        zIndex: 999,
+        zIndex: 99999,
+        boxShadow: '0 10px 25px -3px rgba(15, 41, 66, 0.16), 0 4px 6px -4px rgba(15, 41, 66, 0.08)',
         ...style
       }}
       onClick={(e) => e.stopPropagation()}
@@ -150,7 +169,9 @@ export const SelectItem = ({
   value,
   children,
   disabled = false,
-  className = ''
+  className = '',
+  style = {},
+  indicatorColor
 }) => {
   const { value: selectedValue, onSelect } = useContext(SelectContext);
   const isSelected = selectedValue === value || (selectedValue != null && value != null && String(selectedValue).toLowerCase() === String(value).toLowerCase());
@@ -160,13 +181,25 @@ export const SelectItem = ({
       role="option"
       aria-selected={isSelected}
       tabIndex={disabled ? -1 : 0}
-      onClick={() => !disabled && onSelect(value)}
+      onClick={(e) => {
+        e.stopPropagation();
+        if (!disabled) onSelect(value);
+      }}
       className={`shadcn-select-item ${isSelected ? 'shadcn-select-item-selected' : ''} ${disabled ? 'disabled' : ''} ${className}`}
+      style={{
+        whiteSpace: 'nowrap',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        ...style
+      }}
     >
-      <span className="shadcn-select-item-text">{children}</span>
+      <span className="shadcn-select-item-text" style={{ whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+        {children}
+      </span>
       {isSelected && (
-        <span className="shadcn-select-item-indicator">
-          <Check size={14} color="#1e5aa8" />
+        <span className="shadcn-select-item-indicator" style={{ flexShrink: 0, marginLeft: '8px' }}>
+          <Check size={14} color={indicatorColor || '#1e5aa8'} />
         </span>
       )}
     </div>
@@ -185,16 +218,6 @@ export const SelectSeparator = ({ className = '' }) => (
 
 /**
  * ShadcnSelect — Convenient drop-in component matching standard select props.
- * Usage:
- *   <ShadcnSelect
- *     value={status}
- *     onChange={setStatus}
- *     options={[
- *       { value: 'ALL', label: 'All Statuses' },
- *       { value: 'Active', label: 'Active' },
- *       { value: 'Inactive', label: 'Inactive' }
- *     ]}
- *   />
  */
 export const ShadcnSelect = ({
   value,
@@ -204,6 +227,9 @@ export const ShadcnSelect = ({
   disabled = false,
   className = '',
   triggerStyle = {},
+  contentStyle = {},
+  side = 'auto',
+  align = 'start',
   id = null
 }) => {
   // Find currently selected label
@@ -217,14 +243,47 @@ export const ShadcnSelect = ({
       disabled={disabled}
     >
       <SelectTrigger id={id} className={className} style={triggerStyle}>
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {displayLabel}
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '7px',
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap'
+          }}
+        >
+          {selectedOption?.dotColor && (
+            <span
+              style={{
+                width: '7px',
+                height: '7px',
+                borderRadius: '50%',
+                backgroundColor: selectedOption.dotColor,
+                flexShrink: 0
+              }}
+            />
+          )}
+          <span>{displayLabel}</span>
         </span>
       </SelectTrigger>
-      <SelectContent>
+      <SelectContent side={side} align={align} style={contentStyle}>
         {options.map((opt) => (
           <SelectItem key={opt.value} value={opt.value} disabled={Boolean(opt.disabled)}>
-            {opt.label}
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+              {opt.dotColor && (
+                <span
+                  style={{
+                    width: '7px',
+                    height: '7px',
+                    borderRadius: '50%',
+                    backgroundColor: opt.dotColor,
+                    flexShrink: 0
+                  }}
+                />
+              )}
+              <span>{opt.label}</span>
+            </span>
           </SelectItem>
         ))}
       </SelectContent>

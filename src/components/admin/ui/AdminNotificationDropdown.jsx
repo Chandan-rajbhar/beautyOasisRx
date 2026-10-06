@@ -1,11 +1,52 @@
-import React, { useRef, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { Check, ExternalLink, Calendar, ShoppingBag, CreditCard, MessageSquare } from 'lucide-react';
+import React, { useRef, useEffect, useMemo } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
+import { Check, ExternalLink, Calendar, ShoppingBag, CreditCard, MessageSquare, User, Bell } from 'lucide-react';
 import { useAdminData } from '../../../context/AdminDataContext';
+import { supabaseDataService } from '../../../services/supabaseDataService';
+import { getNotificationRoute, formatTimestamp, isStaticNotification, deduplicateNotifications } from '../../../services/notificationService';
 
 export const AdminNotificationDropdown = ({ isOpen, onClose }) => {
-  const { notifications, markNotificationAsRead, markAllNotificationsAsRead } = useAdminData();
+  const { notifications = [], markNotificationAsRead, markAllNotificationsAsRead } = useAdminData();
   const dropdownRef = useRef(null);
+  const navigate = useNavigate();
+
+  // Dynamic notifications fetched from Supabase, filtered for dynamic data, deduplicated & sorted descending (newest first)
+  const allNotifications = useMemo(() => {
+    let list = [];
+    if (Array.isArray(notifications)) {
+      list = [...notifications];
+    } else {
+      try {
+        const cached = localStorage.getItem('bo_cache_notifications');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) list = [...parsed];
+        }
+      } catch (_) {}
+    }
+    const realList = deduplicateNotifications(list.filter(n => !isStaticNotification(n)));
+    realList.sort((a, b) => {
+      const timeA = new Date(a.created_at || a.createdAt || a.timestamp || a.date || 0).getTime();
+      const timeB = new Date(b.created_at || b.createdAt || b.timestamp || b.date || 0).getTime();
+      return timeB - timeA;
+    });
+    return realList;
+  }, [notifications]);
+
+  const totalCount = allNotifications.length;
+
+  // Show strictly the 3 most recent notifications in the dropdown
+  // If fewer than 3, shows all available. If more than 3, shows only the 3 newest.
+  const recentNotifications = useMemo(() => {
+    return allNotifications.slice(0, 3);
+  }, [allNotifications]);
+
+  // Refresh notifications whenever dropdown opens so the latest notifications are always displayed
+  useEffect(() => {
+    if (isOpen) {
+      supabaseDataService.fetchAll('notifications', { forceFresh: true });
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     const handleOutsideClick = (e) => {
@@ -24,58 +65,61 @@ export const AdminNotificationDropdown = ({ isOpen, onClose }) => {
   if (!isOpen) return null;
 
   const getTypeIcon = (type) => {
-    switch (type) {
+    const t = String(type || '').toLowerCase();
+    switch (t) {
       case 'appointment':
-        return <Calendar size={16} color="#1e5aa8" />;
+        return <Calendar size={15} color="#1e5aa8" />;
       case 'order':
-        return <ShoppingBag size={16} color="#16a34a" />;
+        return <ShoppingBag size={15} color="#16a34a" />;
       case 'payment':
-        return <CreditCard size={16} color="#0284c7" />;
+        return <CreditCard size={15} color="#0284c7" />;
       case 'inquiry':
-        return <MessageSquare size={16} color="#eab308" />;
+      case 'ticket':
+        return <MessageSquare size={15} color="#eab308" />;
+      case 'patient':
+      case 'client':
+        return <User size={15} color="#7c3aed" />;
       default:
-        return <Calendar size={16} color="#1e5aa8" />;
+        return <Bell size={15} color="#1e5aa8" />;
     }
+  };
+
+  const handleNotificationClick = (notif, e) => {
+    if (e) {
+      e.stopPropagation();
+      e.preventDefault();
+    }
+    if (!notif.is_read && !notif.read) {
+      markNotificationAsRead(notif.id);
+    }
+    onClose();
+    const route = getNotificationRoute(notif);
+    if (route && route.path) {
+      navigate(route.path, { state: route.state });
+    }
+  };
+
+  const handleMarkAllRead = (e) => {
+    if (e) e.stopPropagation();
+    markAllNotificationsAsRead();
   };
 
   return (
     <div
       ref={dropdownRef}
-      style={{
-        position: 'absolute',
-        top: '60px',
-        right: '20px',
-        width: '360px',
-        maxWidth: '90vw',
-        background: '#ffffff',
-        borderRadius: '16px',
-        boxShadow: '0 12px 36px rgba(11, 37, 69, 0.15)',
-        border: '1px solid #e2e8f0',
-        zIndex: 500,
-        overflow: 'hidden',
-        animation: 'scaleUp 0.2s cubic-bezier(0.16, 1, 0.3, 1)'
-      }}
+      className="admin-notification-dropdown"
     >
-      <div
-        style={{
-          padding: '16px 20px',
-          borderBottom: '1px solid #e2e8f0',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          background: '#f8fafc'
-        }}
-      >
+      <div className="admin-notification-dropdown-header">
         <div>
-          <h4 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 700, color: '#0f2942' }}>
+          <h4 style={{ margin: 0, fontSize: '0.92rem', fontWeight: 700, color: '#0f2942' }}>
             Notifications
           </h4>
-          <span style={{ fontSize: '0.75rem', color: '#64748b' }}>
-            {notifications.filter(n => !n.read).length} unread updates
+          <span style={{ fontSize: '0.74rem', color: '#64748b' }}>
+            {`${totalCount} update${totalCount === 1 ? '' : 's'}`}
           </span>
         </div>
         <button
-          onClick={markAllNotificationsAsRead}
+          onClick={handleMarkAllRead}
           style={{
             background: 'transparent',
             border: 'none',
@@ -92,88 +136,80 @@ export const AdminNotificationDropdown = ({ isOpen, onClose }) => {
         </button>
       </div>
 
-      <div style={{ maxHeight: '340px', overflowY: 'auto' }}>
-        {notifications.length > 0 ? (
-          notifications.slice(0, 8).map((notif) => (
-            <div
-              key={notif.id}
-              onClick={() => markNotificationAsRead(notif.id)}
-              style={{
-                padding: '14px 20px',
-                borderBottom: '1px solid #f1f5f9',
-                display: 'flex',
-                gap: '12px',
-                background: notif.read ? '#ffffff' : '#f0fdf4',
-                cursor: 'pointer',
-                transition: 'background 0.15s ease'
-              }}
-            >
+      <div className="admin-notification-dropdown-body">
+        {recentNotifications.length > 0 ? (
+          recentNotifications.map((notif) => {
+            const isRead = Boolean(notif.is_read || notif.read);
+            const dateVal = notif.created_at || notif.createdAt;
+            const timeText = dateVal ? formatTimestamp(dateVal) : (notif.timestamp || 'Just now');
+
+            return (
               <div
+                key={notif.id}
+                onClick={(e) => handleNotificationClick(notif, e)}
+                className="admin-notification-dropdown-item"
                 style={{
-                  width: '32px',
-                  height: '32px',
-                  borderRadius: '10px',
-                  background: '#ffffff',
-                  border: '1px solid #e2e8f0',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0
+                  background: isRead ? '#ffffff' : '#f0fdf4'
                 }}
               >
-                {getTypeIcon(notif.type)}
-              </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2px' }}>
-                  <span style={{ fontSize: '0.82rem', fontWeight: 600, color: '#0f2942' }}>
-                    {notif.title}
-                  </span>
-                  <span style={{ fontSize: '0.7rem', color: '#94a3b8' }}>
-                    {notif.timestamp}
-                  </span>
+                <div
+                  style={{
+                    width: '30px',
+                    height: '30px',
+                    borderRadius: '8px',
+                    background: '#ffffff',
+                    border: '1px solid #e2e8f0',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    flexShrink: 0
+                  }}
+                >
+                  {getTypeIcon(notif.type || notif.category)}
                 </div>
-                <p style={{ margin: 0, fontSize: '0.78rem', color: '#475569', lineHeight: 1.4 }}>
-                  {notif.message}
-                </p>
-                {notif.link && (
-                  <Link
-                    to={notif.link}
-                    onClick={onClose}
+                <div style={{ flex: 1, minWidth: 0, overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px', marginBottom: '2px' }}>
+                    <span style={{ fontSize: '0.81rem', fontWeight: 600, color: '#0f2942', wordBreak: 'break-word', lineHeight: 1.25 }}>
+                      {notif.title}
+                    </span>
+                    <span style={{ fontSize: '0.68rem', color: '#94a3b8', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                      {timeText}
+                    </span>
+                  </div>
+                  <p style={{ margin: 0, fontSize: '0.75rem', color: '#475569', lineHeight: 1.35, wordBreak: 'break-word' }}>
+                    {notif.message}
+                  </p>
+                  <span
+                    onClick={(e) => handleNotificationClick(notif, e)}
                     style={{
                       display: 'inline-flex',
                       alignItems: 'center',
                       gap: '4px',
-                      fontSize: '0.72rem',
+                      fontSize: '0.71rem',
                       color: '#1e5aa8',
                       fontWeight: 600,
-                      marginTop: '6px'
+                      marginTop: '4px',
+                      cursor: 'pointer'
                     }}
                   >
                     View details <ExternalLink size={10} />
-                  </Link>
-                )}
+                  </span>
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         ) : (
-          <div style={{ padding: '30px', textAlign: 'center', color: '#64748b', fontSize: '0.85rem' }}>
+          <div style={{ padding: '24px 16px', textAlign: 'center', color: '#64748b', fontSize: '0.82rem' }}>
             No notifications yet
           </div>
         )}
       </div>
 
-      <div
-        style={{
-          padding: '12px',
-          textAlign: 'center',
-          borderTop: '1px solid #e2e8f0',
-          background: '#f8fafc'
-        }}
-      >
+      <div className="admin-notification-dropdown-footer">
         <Link
           to="/notifications"
           onClick={onClose}
-          style={{ fontSize: '0.8rem', color: '#1e5aa8', fontWeight: 600, textDecoration: 'none' }}
+          style={{ fontSize: '0.78rem', color: '#1e5aa8', fontWeight: 600, textDecoration: 'none' }}
         >
           View all notifications →
         </Link>

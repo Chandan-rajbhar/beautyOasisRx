@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { ChevronLeft, ChevronRight, ArrowUpDown, AlertCircle, RefreshCw } from 'lucide-react';
 import { AdminEmptyState } from './AdminEmptyState';
 import { TableSkeleton } from './AdminLoaders';
@@ -7,9 +7,13 @@ export const AdminTable = ({
   columns,
   data,
   loading = false,
+  showLoadingBar = false,
+  showSkeleton = false,
+  loadingMessage = 'Loading data...',
   error = null,
   onRetry = null,
   itemsPerPage = 10,
+  emptyIcon = null,
   emptyTitle = "No records found",
   emptyDescription = "There are no entries currently available.",
   emptyActionLabel = null,
@@ -17,11 +21,18 @@ export const AdminTable = ({
   keyField = "id",
   itemLabel = "results",
   currentPage: externalPage,
-  onPageChange: externalOnPageChange
+  onPageChange: externalOnPageChange,
+  className = "",
+  onRowClick = null,
+  renderMobileCard = null
 }) => {
   const [internalPage, setInternalPage] = useState(1);
   const [sortField, setSortField] = useState(null);
   const [sortDirection, setSortDirection] = useState('asc'); // 'asc' or 'desc'
+  const hasLoadedOnce = useRef((!loading && !error) || data.length > 0);
+
+  if (!loading && !error) hasLoadedOnce.current = true;
+  const showInitialLoading = loading && !hasLoadedOnce.current;
 
   const currentPage = externalPage !== undefined ? externalPage : internalPage;
   const setCurrentPage = (newPage) => {
@@ -65,9 +76,9 @@ export const AdminTable = ({
   }, [sortedData, currentPage, itemsPerPage]);
 
   return (
-    <div className="admin-table-container">
-      {loading && <div className="admin-table-loading-bar" />}
-      <div className="admin-table-scroll">
+    <div className={`admin-table-container ${className}`.trim()}>
+      {showInitialLoading && showLoadingBar && <div className="admin-table-loading-bar" />}
+      <div className={`admin-table-scroll ${renderMobileCard ? 'admin-table-desktop-only' : ''}`}>
         <table className="admin-table">
           <thead>
             <tr>
@@ -82,7 +93,15 @@ export const AdminTable = ({
                   }}
                   onClick={() => col.sortable && col.accessor && handleSort(col.accessor)}
                 >
-                  <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                  <div
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      justifyContent: col.align === 'right' ? 'flex-end' : col.align === 'center' ? 'center' : 'flex-start',
+                      width: col.align === 'right' ? '100%' : 'auto'
+                    }}
+                  >
                     <span>{col.header}</span>
                     {col.sortable && <ArrowUpDown size={12} color="#94a3b8" />}
                   </div>
@@ -91,8 +110,23 @@ export const AdminTable = ({
             </tr>
           </thead>
           <tbody>
-            {loading ? (
-              <TableSkeleton columns={columns} rows={Math.min(itemsPerPage, 6)} />
+            {showInitialLoading ? (
+              showSkeleton ? (
+                <TableSkeleton columns={columns} rows={Math.min(itemsPerPage, 6)} />
+              ) : loadingMessage ? (
+                <tr>
+                  <td colSpan={columns.length} style={{ padding: '28px 24px', textAlign: 'center' }}>
+                    <span className="admin-table-loading-status" role="status" aria-live="polite">
+                      <RefreshCw size={16} aria-hidden="true" />
+                      <span>{loadingMessage}</span>
+                    </span>
+                  </td>
+                </tr>
+              ) : (
+                <tr>
+                  <td colSpan={columns.length} style={{ height: '80px', border: 'none' }} />
+                </tr>
+              )
             ) : error ? (
               <tr>
                 <td colSpan={columns.length} style={{ padding: '48px 24px', textAlign: 'center' }}>
@@ -145,7 +179,23 @@ export const AdminTable = ({
               </tr>
             ) : paginatedData.length > 0 ? (
               paginatedData.map((row, rIdx) => (
-                <tr key={row[keyField] || rIdx}>
+                <tr
+                  key={row[keyField] || rIdx}
+                  onClick={onRowClick ? (e) => {
+                    if (
+                      e.target.closest('button') ||
+                      e.target.closest('a') ||
+                      e.target.closest('input') ||
+                      e.target.closest('select') ||
+                      e.target.closest('.patient-action-menu-container') ||
+                      e.target.closest('.patient-action-dropdown-menu')
+                    ) {
+                      return;
+                    }
+                    onRowClick(row);
+                  } : undefined}
+                  style={onRowClick ? { cursor: 'pointer' } : undefined}
+                >
                   {columns.map((col, cIdx) => (
                     <td
                       key={cIdx}
@@ -167,6 +217,7 @@ export const AdminTable = ({
               <tr>
                 <td colSpan={columns.length} style={{ padding: '0' }}>
                   <AdminEmptyState
+                    icon={emptyIcon || undefined}
                     title={emptyTitle}
                     description={emptyDescription}
                     actionLabel={emptyActionLabel}
@@ -179,13 +230,62 @@ export const AdminTable = ({
         </table>
       </div>
 
+      {/* Responsive Mobile Cards View (only if renderMobileCard is passed) */}
+      {renderMobileCard && (
+        <div className="admin-table-mobile-only">
+          {showInitialLoading ? (
+            <div style={{ padding: '32px 16px', textAlign: 'center', color: '#64748b' }}>
+              <span className="admin-table-loading-status" role="status" aria-live="polite">
+                <RefreshCw size={16} aria-hidden="true" className="animate-spin" />
+                <span>{loadingMessage}</span>
+              </span>
+            </div>
+          ) : error ? (
+            <div style={{ padding: '32px 16px', textAlign: 'center' }}>
+              <div style={{ maxWidth: '460px', margin: '0 auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                <div style={{ width: '42px', height: '42px', borderRadius: '50%', background: '#fee2e2', color: '#dc2626', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <AlertCircle size={20} />
+                </div>
+                <div style={{ fontWeight: 600, fontSize: '0.92rem', color: '#0f2942' }}>Unable to Load Data</div>
+                <div style={{ fontSize: '0.82rem', color: '#64748b' }}>
+                  {typeof error === 'string' ? error : 'An error occurred while communicating with Supabase.'}
+                </div>
+                {onRetry && (
+                  <button onClick={onRetry} style={{ padding: '6px 14px', borderRadius: '8px', background: '#1e5aa8', color: '#fff', border: 'none', fontWeight: 600, fontSize: '0.8rem', cursor: 'pointer' }}>
+                    Retry Connection
+                  </button>
+                )}
+              </div>
+            </div>
+          ) : paginatedData.length > 0 ? (
+            <div className="admin-table-cards-list" style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '12px' }}>
+              {paginatedData.map((row, rIdx) => (
+                <div key={row[keyField] || rIdx} className="admin-table-card-item">
+                  {renderMobileCard(row, rIdx, paginatedData.length)}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ padding: '16px' }}>
+              <AdminEmptyState
+                icon={emptyIcon || undefined}
+                title={emptyTitle}
+                description={emptyDescription}
+                actionLabel={emptyActionLabel}
+                onAction={onEmptyAction}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Pagination Footer */}
-      {!loading && sortedData.length > 0 && (
+      {!showInitialLoading && sortedData.length > 0 && (
         <div className="admin-pagination">
           <div style={{ fontSize: '0.82rem', color: '#64748b' }}>
-            Showing <strong>{Math.min((currentPage - 1) * itemsPerPage + 1, sortedData.length)}</strong> to{' '}
-            <strong>{Math.min(currentPage * itemsPerPage, sortedData.length)}</strong> of{' '}
-            <strong>{sortedData.length}</strong> {itemLabel}
+            Showing <strong style={{ color: '#0f2942', fontWeight: 600 }}>{Math.min((currentPage - 1) * itemsPerPage + 1, sortedData.length)}</strong> to{' '}
+            <strong style={{ color: '#0f2942', fontWeight: 600 }}>{Math.min(currentPage * itemsPerPage, sortedData.length)}</strong> of{' '}
+            <strong style={{ color: '#0f2942', fontWeight: 600 }}>{sortedData.length}</strong> {itemLabel}
           </div>
 
           {/* Show pagination controls only if more than itemsPerPage (e.g. > 20 patients) */}

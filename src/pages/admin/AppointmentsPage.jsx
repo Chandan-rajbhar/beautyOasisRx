@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom';
 import {
   Calendar,
   Plus,
@@ -29,6 +29,17 @@ import { AdminConfirmDialog } from '../../components/admin/ui/AdminConfirmDialog
 import { StripePaymentModal } from '../../components/admin/appointments/StripePaymentModal';
 import { ShadcnSelect } from '../../components/ui/select';
 import { supabase } from '../../lib/supabaseClient';
+import { supabaseAdmin } from '../../lib/supabaseAdmin';
+import { supabaseDataService } from '../../services/supabaseDataService';
+import {
+  getAppointmentDateObj,
+  isAppointmentUpcoming,
+  isAppointmentRecent,
+  isAppointmentToday,
+  isAppointmentThisWeek,
+  isAppointmentThisMonth,
+  getUpcomingAppointments
+} from '../../utils/appointmentUtils';
 
 // ─────────────────────────────────────────────────────────────
 // TIME & DURATION HELPERS
@@ -65,13 +76,6 @@ function parseDurationMinutes(duration) {
   return match ? parseInt(match[1], 10) : 60;
 }
 
-// Standard clinic time slots fallback
-const DEFAULT_TIME_SLOTS = [
-  '09:00 AM', '09:30 AM', '10:00 AM', '10:30 AM', '11:00 AM', '11:30 AM',
-  '12:00 PM', '12:30 PM', '01:00 PM', '01:30 PM', '02:00 PM', '02:30 PM',
-  '03:00 PM', '03:30 PM', '04:00 PM', '04:30 PM', '05:00 PM', '05:30 PM'
-];
-
 export const AppointmentsPage = () => {
   const {
     appointments = [],
@@ -85,6 +89,7 @@ export const AppointmentsPage = () => {
   } = useAdminData();
 
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
 
   // Search & Filter state
   const [searchTerm, setSearchTerm] = useState('');
@@ -93,7 +98,22 @@ export const AppointmentsPage = () => {
   const [providerFilter, setProviderFilter] = useState('ALL');
   const [paymentFilter, setPaymentFilter] = useState('ALL');
   const [dateFilter, setDateFilter] = useState('ALL');
-  const [viewTab, setViewTab] = useState('ALL'); // 'ALL' | 'UPCOMING' | 'RECENT'
+  const [viewTab, setViewTab] = useState(() => {
+    const tabParam = searchParams.get('tab') || searchParams.get('view');
+    if (tabParam && tabParam.toUpperCase() === 'UPCOMING') return 'UPCOMING';
+    if (tabParam && tabParam.toUpperCase() === 'RECENT') return 'RECENT';
+    return 'ALL';
+  });
+
+  // Sync viewTab with URL query param if it changes
+  useEffect(() => {
+    const tabParam = searchParams.get('tab') || searchParams.get('view');
+    if (tabParam && tabParam.toUpperCase() === 'UPCOMING') {
+      setViewTab('UPCOMING');
+    } else if (tabParam && tabParam.toUpperCase() === 'RECENT') {
+      setViewTab('RECENT');
+    }
+  }, [searchParams]);
 
   // Modals & Drawers state
   const [isAddDrawerOpen, setIsAddDrawerOpen] = useState(searchParams.get('action') === 'new');
@@ -102,6 +122,21 @@ export const AppointmentsPage = () => {
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
   const [payNowAppointment, setPayNowAppointment] = useState(null);
   const [formError, setFormError] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const location = useLocation();
+
+  // Auto-open appointment details drawer when navigated from a notification
+  useEffect(() => {
+    const targetId = location.state?.selectedAppointmentId || location.state?.highlightId || searchParams.get('id');
+    if (targetId && appointments.length > 0) {
+      const match = appointments.find(a => 
+        String(a.id).toLowerCase() === String(targetId).toLowerCase()
+      );
+      if (match) {
+        setSelectedAppointment(match);
+      }
+    }
+  }, [location.state, searchParams, appointments]);
 
   // Actions Dropdown Menu state & viewport positioning
   const [actionMenuApptId, setActionMenuApptId] = useState(null);
@@ -111,14 +146,24 @@ export const AppointmentsPage = () => {
   // Dynamic Supabase data states
   const [patientsList, setPatientsList] = useState(() => {
     try {
-      const cached = localStorage.getItem('cached_dynamic_patients') || localStorage.getItem('bo_cache_clients');
+      const cached = localStorage.getItem('cached_dynamic_patients');
       if (cached) {
         const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map(c => ({
+            ...c,
+            id: c.id,
+            full_name: c.full_name || c.name || 'Patient',
+            email: c.email || '',
+            phone: c.phone || ''
+          }));
+        }
       }
-    } catch (_) {}
-    return clients || [];
+    } catch (_) { }
+    return [];
   });
+  const [patientsLoading, setPatientsLoading] = useState(false);
+  const [patientsError, setPatientsError] = useState(false);
 
   const [cliniciansList, setCliniciansList] = useState(() => {
     try {
@@ -127,7 +172,7 @@ export const AppointmentsPage = () => {
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
-    } catch (_) {}
+    } catch (_) { }
     return providers || [];
   });
 
@@ -138,32 +183,123 @@ export const AppointmentsPage = () => {
         const parsed = JSON.parse(cached);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
-    } catch (_) {}
+    } catch (_) { }
     return services || [];
   });
 
-  // Dedicated direct Supabase fetcher for Select Patient, Assigned Clinician, and Protocols
-  const fetchSupabaseDropdownData = useCallback(async () => {
-    // 1. Fetch Patients from Supabase public.patients
+  // Active appointment times from public.appointment_times (populated on mount)
+  const [appointmentTimeSlots, setAppointmentTimeSlots] = useState(() => {
     try {
-      const { data: pData, error: pErr } = await supabase
-        .from('patients')
-        .select('*')
-        .order('created_at', { ascending: false });
-      if (!pErr && Array.isArray(pData) && pData.length > 0) {
-        setPatientsList(pData);
-        try { localStorage.setItem('cached_dynamic_patients', JSON.stringify(pData)); } catch (_) {}
-      } else {
-        const { data: cData } = await supabase.from('clients').select('*');
-        if (Array.isArray(cData) && cData.length > 0) {
-          setPatientsList(cData);
+      const cached = localStorage.getItem('bo_appointment_times_cache');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const active = parsed.filter(t => t.status === 'Active' && !String(t.id).startsWith('fb-')).map(t => t.appointment_time);
+          if (active.length > 0) return active;
         }
+      }
+    } catch (_) { }
+    return [];
+  });
+
+  const fetchPatients = useCallback(async () => {
+    setPatientsLoading(prev => (patientsList.length === 0 ? true : false));
+    setPatientsError(false);
+    try {
+      let rawData = null;
+
+      // 1. Primary: query public.patients via standard Supabase client
+      try {
+        const res = await supabase
+          .from('patients')
+          .select('id, full_name, name, email, phone')
+          .order('created_at', { ascending: false });
+
+        if (!res.error && Array.isArray(res.data)) {
+          rawData = res.data;
+        } else {
+          // If created_at order clause fails, retry plain select
+          const retryRes = await supabase
+            .from('patients')
+            .select('id, full_name, name, email, phone');
+          if (!retryRes.error && Array.isArray(retryRes.data)) {
+            rawData = retryRes.data;
+          }
+        }
+      } catch (err) {
+        console.warn('Patient fetch via primary client failed:', err);
+      }
+
+      // 2. Secondary fallback: query via isolated supabaseAdmin client
+      if (rawData === null) {
+        try {
+          const adminRes = await supabaseAdmin
+            .from('patients')
+            .select('id, full_name, name, email, phone')
+            .order('created_at', { ascending: false });
+
+          if (!adminRes.error && Array.isArray(adminRes.data)) {
+            rawData = adminRes.data;
+          } else {
+            const plainAdminRes = await supabaseAdmin
+              .from('patients')
+              .select('id, full_name, name, email, phone');
+            if (!plainAdminRes.error && Array.isArray(plainAdminRes.data)) {
+              rawData = plainAdminRes.data;
+            }
+          }
+        } catch (adminErr) {
+          console.warn('Patient fetch via supabaseAdmin failed:', adminErr);
+        }
+      }
+
+      // 3. Fallback: try supabaseDataService
+      if (rawData === null) {
+        try {
+          const serviceClients = await supabaseDataService.fetchAll('clients', { forceFresh: true });
+          if (Array.isArray(serviceClients) && serviceClients.length > 0) {
+            rawData = serviceClients;
+          }
+        } catch (_) { }
+      }
+
+      if (rawData !== null) {
+        const dynamicRows = (rawData || []).filter(
+          p => !p.id || !String(p.id).startsWith('cli-')
+        );
+
+        const normalized = dynamicRows.map(p => ({
+          ...p,
+          id: p.id,
+          full_name: p.full_name || p.name || 'Patient',
+          email: p.email || '',
+          phone: p.phone || ''
+        }));
+
+        setPatientsList(normalized);
+        setPatientsError(false);
+        try {
+          localStorage.setItem('cached_dynamic_patients', JSON.stringify(supabaseDataService.sanitizeCacheData(normalized)));
+        } catch (_) { }
+        return true;
+      } else {
+        setPatientsError(true);
+        toast.error('Could not load patients. Please try again.');
+        return false;
       }
     } catch (err) {
       console.warn('Could not fetch patients from Supabase:', err);
+      setPatientsError(true);
+      toast.error('Could not load patients. Please try again.');
+      return false;
+    } finally {
+      setPatientsLoading(false);
     }
+  }, [patientsList.length]);
 
-    // 2. Fetch Clinicians from Supabase public.clinicians
+  // Dedicated direct Supabase fetcher for Assigned Clinician and Protocols
+  const fetchSupabaseDropdownData = useCallback(async () => {
+    // 1. Fetch Clinicians from Supabase public.clinicians
     try {
       const { data: cData, error: cErr } = await supabase
         .from('clinicians')
@@ -171,7 +307,7 @@ export const AppointmentsPage = () => {
         .order('created_at', { ascending: false });
       if (!cErr && Array.isArray(cData) && cData.length > 0) {
         setCliniciansList(cData);
-        try { localStorage.setItem('bo_clinicians_cache', JSON.stringify(cData)); } catch (_) {}
+        try { localStorage.setItem('bo_clinicians_cache', JSON.stringify(supabaseDataService.sanitizeCacheData(cData))); } catch (_) { }
       } else {
         const { data: prData } = await supabase.from('providers').select('*');
         if (Array.isArray(prData) && prData.length > 0) {
@@ -182,7 +318,7 @@ export const AppointmentsPage = () => {
       console.warn('Could not fetch clinicians from Supabase:', err);
     }
 
-    // 3. Fetch Treatment Protocols from Supabase public.treatment_protocols
+    // 2. Fetch Treatment Protocols from Supabase public.treatment_protocols
     try {
       const { data: tpData, error: tpErr } = await supabase
         .from('treatment_protocols')
@@ -190,7 +326,7 @@ export const AppointmentsPage = () => {
         .order('created_at', { ascending: false });
       if (!tpErr && Array.isArray(tpData) && tpData.length > 0) {
         setProtocolsList(tpData);
-        try { localStorage.setItem('bo_treatment_protocols_cache', JSON.stringify(tpData)); } catch (_) {}
+        try { localStorage.setItem('bo_treatment_protocols_cache', JSON.stringify(tpData)); } catch (_) { }
       } else {
         const { data: srvData } = await supabase.from('services').select('*');
         if (Array.isArray(srvData) && srvData.length > 0) {
@@ -200,20 +336,35 @@ export const AppointmentsPage = () => {
     } catch (err) {
       console.warn('Could not fetch treatment protocols from Supabase:', err);
     }
+
+    // 3. Fetch Active Appointment Times from public.appointment_times
+    try {
+      const { data: atData, error: atErr } = await supabase
+        .from('appointment_times')
+        .select('appointment_time, status')
+        .eq('status', 'Active')
+        .order('created_at', { ascending: true });
+      if (!atErr && Array.isArray(atData)) {
+        setAppointmentTimeSlots(atData.map(t => t.appointment_time));
+      }
+    } catch (err) {
+      console.warn('Could not fetch appointment times from Supabase:', err);
+    }
   }, []);
 
   // Fetch on mount
   useEffect(() => {
     fetchSupabaseDropdownData();
-  }, [fetchSupabaseDropdownData]);
+    fetchPatients();
+  }, [fetchSupabaseDropdownData, fetchPatients]);
 
-  // Synchronize when context updates
   useEffect(() => {
-    if (Array.isArray(clients) && clients.length > 0 && patientsList.length === 0) {
-      setPatientsList(clients);
+    if (isAddDrawerOpen || editAppointment) {
+      fetchPatients();
     }
-  }, [clients]);
+  }, [isAddDrawerOpen, editAppointment, fetchPatients]);
 
+  // Synchronize clinician and protocol lists when context updates
   useEffect(() => {
     if (Array.isArray(providers) && providers.length > 0 && cliniciansList.length === 0) {
       setCliniciansList(providers);
@@ -250,14 +401,15 @@ export const AppointmentsPage = () => {
 
   // Client Selection auto-fill
   const handleClientSelect = (clientId) => {
-    const c = patientsList.find(cl => String(cl.id) === String(clientId)) || clients.find(cl => String(cl.id) === String(clientId));
+    const c = patientsList.find(cl => String(cl.id) === String(clientId));
     if (c) {
       setFormData(prev => ({
         ...prev,
         clientId: String(c.id),
         clientName: c.full_name || c.name || '',
         clientEmail: c.email || '',
-        clientPhone: c.phone || ''
+        clientPhone: c.phone || '',
+        selectedPatient: c
       }));
     } else {
       setFormData(prev => ({ ...prev, clientId }));
@@ -298,17 +450,16 @@ export const AppointmentsPage = () => {
   const handleOpenAddDrawer = () => {
     setEditAppointment(null);
     setFormError(null);
-    const firstPatient = patientsList[0] || clients[0] || {};
     const firstProtocol = protocolsList[0] || services[0] || {};
     const firstClinician = cliniciansList[0] || providers[0] || {};
 
     const priceVal = Number(firstProtocol.price ?? firstProtocol.numericPrice ?? 185);
 
     setFormData({
-      clientId: firstPatient.id ? String(firstPatient.id) : '',
-      clientName: firstPatient.full_name || firstPatient.name || '',
-      clientEmail: firstPatient.email || '',
-      clientPhone: firstPatient.phone || '',
+      clientId: '',
+      clientName: '',
+      clientEmail: '',
+      clientPhone: '',
       serviceId: firstProtocol.id ? String(firstProtocol.id) : '',
       serviceName: firstProtocol.protocol_title || firstProtocol.title || firstProtocol.name || '',
       providerId: firstClinician.id ? String(firstClinician.id) : '',
@@ -353,11 +504,30 @@ export const AppointmentsPage = () => {
 
   // Pre-computed options for Shadcn Dropdowns
   const patientOptions = useMemo(() => {
-    return patientsList.map(c => ({
+    if (patientsLoading && patientsList.length === 0) {
+      return [{ value: '', label: 'Loading patients...', disabled: true }];
+    }
+    if (patientsError && patientsList.length === 0) {
+      return [{ value: '', label: 'Unable to load patients', disabled: true }];
+    }
+    if (patientsList.length === 0) {
+      return [{ value: '', label: 'No patients found', disabled: true }];
+    }
+    const options = patientsList.map(c => ({
       value: String(c.id),
-      label: `${c.full_name || c.name || 'Patient'}${c.phone || c.email ? ` (${c.phone || c.email})` : ''}`
+      label: `${c.full_name || 'Patient'}${c.phone ? ` (${c.phone})` : ''}`
     }));
-  }, [patientsList]);
+
+    // If currently selected patient ID is not in fetched list, keep it visible in the dropdown
+    if (formData.clientId && !options.some(o => o.value === String(formData.clientId))) {
+      options.unshift({
+        value: String(formData.clientId),
+        label: `${formData.clientName || 'Selected Patient'}${formData.clientPhone ? ` (${formData.clientPhone})` : ''}`
+      });
+    }
+
+    return options;
+  }, [patientsList, patientsLoading, patientsError, formData.clientId, formData.clientName, formData.clientPhone]);
 
   const serviceOptions = useMemo(() => {
     return protocolsList.map(s => {
@@ -379,40 +549,28 @@ export const AppointmentsPage = () => {
   }, [cliniciansList]);
 
   // ─────────────────────────────────────────────────────────────
-  // DYNAMIC TIME SLOTS CALCULATION & CONFLICT DETECTION
+  // TIME SLOTS — sourced from public.appointment_times (Active only)
+  // Conflict detection overlaid to mark already-booked slots
   // ─────────────────────────────────────────────────────────────
   const availableTimeSlots = useMemo(() => {
+    const baseSlots = appointmentTimeSlots || [];
+
     if (!formData.providerId || !formData.date) {
-      return DEFAULT_TIME_SLOTS.map(t => ({ time: t, isBooked: false }));
+      return baseSlots.map(t => ({ time: t, isBooked: false }));
     }
 
+    // Check if clinician is off on selected day
     const clinician = cliniciansList.find(p => String(p.id) === String(formData.providerId)) || providers.find(p => String(p.id) === String(formData.providerId));
-    let startMin = 540;  // 09:00 AM
-    let endMin = 1080;   // 06:00 PM
-
-    // Check clinician availability schedule if defined
     if (clinician && clinician.availability_schedule && typeof clinician.availability_schedule === 'object') {
       const dayName = new Date(formData.date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'long' });
       const dayHours = clinician.availability_schedule[dayName];
-      if (dayHours && typeof dayHours === 'string') {
-        if (dayHours.toLowerCase() === 'off') {
-          return [{ time: 'Clinician is off on this date', isBooked: true, isOff: true }];
-        }
-        const timeRangeMatch = dayHours.match(/(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/);
-        if (timeRangeMatch) {
-          const sMin = timeToMinutes(timeRangeMatch[1]);
-          const eMin = timeToMinutes(timeRangeMatch[2]);
-          if (eMin > sMin) {
-            startMin = sMin;
-            endMin = eMin;
-          }
-        }
+      if (dayHours && typeof dayHours === 'string' && dayHours.toLowerCase() === 'off') {
+        return [{ time: 'Clinician is off on this date', isBooked: true, isOff: true }];
       }
     }
 
+    // Get existing bookings for clinician conflict detection
     const durationMins = parseDurationMinutes(formData.duration);
-
-    // Get existing appointments for this clinician on this date (excluding cancelled & currently editing appt)
     const existingBookings = appointments.filter(apt => {
       if (editAppointment && apt.id === editAppointment.id) return false;
       if (apt.status === 'Cancelled') return false;
@@ -425,33 +583,55 @@ export const AppointmentsPage = () => {
       return { start: s, end: s + d };
     });
 
-    const slots = [];
-    for (let m = startMin; m + durationMins <= endMin; m += 30) {
-      const slotStart = m;
-      const slotEnd = m + durationMins;
-      const isConflict = existingBookings.some(b => slotStart < b.end && slotEnd > b.start);
-      slots.push({
-        time: minutesToTime(slotStart),
-        isBooked: isConflict
-      });
-    }
+    // Also get existing bookings for patient duplicate detection if patient is selected
+    const patientBookings = formData.clientId ? appointments.filter(apt => {
+      if (editAppointment && apt.id === editAppointment.id) return false;
+      if (apt.status === 'Cancelled') return false;
+      const aptPtId = apt.patient_id || apt.client_id || apt.clientId;
+      const aptDate = apt.appointment_date || apt.date;
+      return String(aptPtId) === String(formData.clientId) && aptDate === formData.date;
+    }).map(apt => {
+      const s = timeToMinutes(apt.appointment_time || apt.time);
+      const d = parseDurationMinutes(apt.duration);
+      return { start: s, end: s + d };
+    }) : [];
 
-    return slots.length > 0 ? slots : DEFAULT_TIME_SLOTS.map(t => ({ time: t, isBooked: false }));
-  }, [formData.providerId, formData.date, formData.duration, cliniciansList, providers, appointments, editAppointment]);
+    return baseSlots.map(timeStr => {
+      const slotStart = timeToMinutes(timeStr);
+      const slotEnd = slotStart + durationMins;
+      const isClinicianConflict = existingBookings.some(b => slotStart < b.end && slotEnd > b.start);
+      const isPatientConflict = patientBookings.some(b => slotStart < b.end && slotEnd > b.start);
+      const isConflict = isClinicianConflict || isPatientConflict;
+      let conflictLabel = 'Already Booked';
+      if (isClinicianConflict && isPatientConflict) conflictLabel = 'Clinician & Patient Booked';
+      else if (isClinicianConflict) conflictLabel = 'Clinician Booked';
+      else if (isPatientConflict) conflictLabel = 'Patient Already Booked';
+
+      return {
+        time: timeStr,
+        isBooked: isConflict,
+        conflictLabel
+      };
+    });
+  }, [appointmentTimeSlots, formData.providerId, formData.clientId, formData.date, formData.duration, cliniciansList, providers, appointments, editAppointment]);
+
 
   const timeOptions = useMemo(() => {
     return availableTimeSlots.map((slot) => ({
       value: slot.time,
-      label: slot.isBooked ? `${slot.time} (Already Booked)` : slot.time,
+      label: slot.isBooked ? `${slot.time} (${slot.conflictLabel || 'Already Booked'})` : slot.time,
       disabled: slot.isBooked
     }));
   }, [availableTimeSlots]);
 
   // ─────────────────────────────────────────────────────────────
-  // SAVE APPOINTMENT (CREATE / UPDATE) WITH CONFLICT VALIDATION
+  // SAVE APPOINTMENT (CREATE / UPDATE) WITH DUAL CONFLICT VALIDATION
+  // Validates Clinician + Date + Time AND Patient + Date + Time
+  // Live checks in Supabase and in-memory to block duplicate bookings
   // ─────────────────────────────────────────────────────────────
   const handleSaveAppointment = async (e) => {
     e.preventDefault();
+    if (isSaving) return;
     setFormError(null);
 
     if (!formData.clientId) {
@@ -471,79 +651,274 @@ export const AppointmentsPage = () => {
       return;
     }
 
-    // Step 1: Validate conflict with clinician's schedule & other bookings
-    const selectedStartMin = timeToMinutes(formData.time);
-    const selectedDurationMin = parseDurationMinutes(formData.duration);
-    const selectedEndMin = selectedStartMin + selectedDurationMin;
-
-    const conflict = appointments.find(apt => {
-      if (editAppointment && apt.id === editAppointment.id) return false;
-      if (apt.status === 'Cancelled') return false;
-      const aptProvId = apt.clinician_id || apt.provider_id || apt.providerId;
-      const aptDate = apt.appointment_date || apt.date;
-      if (String(aptProvId) !== String(formData.providerId) || aptDate !== formData.date) return false;
-
-      const aptStart = timeToMinutes(apt.appointment_time || apt.time);
-      const aptDur = parseDurationMinutes(apt.duration);
-      const aptEnd = aptStart + aptDur;
-
-      return selectedStartMin < aptEnd && selectedEndMin > aptStart;
-    });
-
-    if (conflict) {
-      const errMsg = 'This clinician is already booked for the selected time.';
-      setFormError(errMsg);
-      toast.error(errMsg);
-      return;
-    }
-
-    // Prepare complete payload with both snake_case and camelCase for resilient Supabase storage
-    const appointmentPayload = {
-      patient_id: formData.clientId,
-      client_id: formData.clientId,
-      clientId: formData.clientId,
-      patient_name: formData.clientName,
-      client_name: formData.clientName,
-      clientName: formData.clientName,
-      patient_email: formData.clientEmail,
-      client_email: formData.clientEmail,
-      clientEmail: formData.clientEmail,
-      patient_phone: formData.clientPhone,
-      client_phone: formData.clientPhone,
-      clientPhone: formData.clientPhone,
-      treatment_protocol_id: formData.serviceId,
-      service_id: formData.serviceId,
-      serviceId: formData.serviceId,
-      protocol_title: formData.serviceName,
-      service_name: formData.serviceName,
-      serviceName: formData.serviceName,
-      clinician_id: formData.providerId,
-      provider_id: formData.providerId,
-      providerId: formData.providerId,
-      clinician_name: formData.providerName,
-      provider_name: formData.providerName,
-      providerName: formData.providerName,
-      appointment_date: formData.date,
-      date: formData.date,
-      appointment_time: formData.time,
-      time: formData.time,
-      duration: formData.duration,
-      amount: formData.price,
-      price: formData.price,
-      notes: formData.notes || '',
-      // Initial status and payment status are strictly system-driven
-      status: editAppointment ? editAppointment.status : 'Confirmed',
-      payment_status: editAppointment ? (editAppointment.payment_status || editAppointment.paymentStatus || 'Pending') : 'Pending',
-      paymentStatus: editAppointment ? (editAppointment.payment_status || editAppointment.paymentStatus || 'Pending') : 'Pending'
-    };
+    setIsSaving(true);
 
     try {
+      const selectedStartMin = timeToMinutes(formData.time);
+      const selectedDurationMin = parseDurationMinutes(formData.duration);
+      const selectedEndMin = selectedStartMin + selectedDurationMin;
+
+      // ── 1. In-Memory Validation (Instant Feedback) ──
+      // 1A. Validate Clinician conflict in loaded appointments
+      const clinicianConflict = appointments.find(apt => {
+        if (editAppointment && apt.id === editAppointment.id) return false;
+        if (apt.status === 'Cancelled') return false;
+        const aptProvId = apt.clinician_id || apt.provider_id || apt.providerId;
+        const aptDate = apt.appointment_date || apt.date;
+        if (String(aptProvId) !== String(formData.providerId) || aptDate !== formData.date) return false;
+
+        const aptStart = timeToMinutes(apt.appointment_time || apt.time);
+        const aptDur = parseDurationMinutes(apt.duration);
+        const aptEnd = aptStart + aptDur;
+
+        return selectedStartMin < aptEnd && selectedEndMin > aptStart;
+      });
+
+      if (clinicianConflict) {
+        const errMsg = `This clinician is already booked for ${formData.date} at ${formData.time}. Please select a different time slot or clinician.`;
+        setFormError(errMsg);
+        toast.error(errMsg);
+        setIsSaving(false);
+        return;
+      }
+
+      // 1B. Validate Patient duplicate in loaded appointments
+      const patientConflict = appointments.find(apt => {
+        if (editAppointment && apt.id === editAppointment.id) return false;
+        if (apt.status === 'Cancelled') return false;
+        const aptPtId = apt.patient_id || apt.client_id || apt.clientId;
+        const aptDate = apt.appointment_date || apt.date;
+        if (String(aptPtId) !== String(formData.clientId) || aptDate !== formData.date) return false;
+
+        const aptStart = timeToMinutes(apt.appointment_time || apt.time);
+        const aptDur = parseDurationMinutes(apt.duration);
+        const aptEnd = aptStart + aptDur;
+
+        return selectedStartMin < aptEnd && selectedEndMin > aptStart;
+      });
+
+      if (patientConflict) {
+        const errMsg = `This patient already has an appointment scheduled for ${formData.date} at ${formData.time}. Please select a different date or time.`;
+        setFormError(errMsg);
+        toast.error(errMsg);
+        setIsSaving(false);
+        return;
+      }
+
+      // ── 2. Live Supabase Pre-Validation (Checks Against Authoritative DB) ──
+      try {
+        const checkQuery = supabase
+          .from('appointments')
+          .select('id, clinician_id, provider_id, patient_id, client_id, appointment_date, date, appointment_time, time, status, duration')
+          .neq('status', 'Cancelled');
+
+        if (editAppointment) {
+          checkQuery.neq('id', editAppointment.id);
+        }
+
+        const { data: liveBookings, error: checkErr } = await checkQuery;
+        if (!checkErr && Array.isArray(liveBookings)) {
+          // Live check: Clinician exact slot or duration overlap
+          const dbClinicianConflict = liveBookings.find(apt => {
+            const pId = apt.clinician_id || apt.provider_id;
+            const d = apt.appointment_date || apt.date;
+            if (String(pId) !== String(formData.providerId) || d !== formData.date) return false;
+
+            const aptStart = timeToMinutes(apt.appointment_time || apt.time);
+            const aptDur = parseDurationMinutes(apt.duration);
+            const aptEnd = aptStart + aptDur;
+
+            return selectedStartMin < aptEnd && selectedEndMin > aptStart;
+          });
+
+          if (dbClinicianConflict) {
+            const errMsg = `This clinician is already booked for ${formData.date} at ${formData.time}. Please select another time slot or clinician.`;
+            setFormError(errMsg);
+            toast.error(errMsg);
+            setIsSaving(false);
+            return;
+          }
+
+          // Live check: Patient duplicate booking on same date & time
+          const dbPatientConflict = liveBookings.find(apt => {
+            const ptId = apt.patient_id || apt.client_id;
+            const d = apt.appointment_date || apt.date;
+            if (String(ptId) !== String(formData.clientId) || d !== formData.date) return false;
+
+            const aptStart = timeToMinutes(apt.appointment_time || apt.time);
+            const aptDur = parseDurationMinutes(apt.duration);
+            const aptEnd = aptStart + aptDur;
+
+            return selectedStartMin < aptEnd && selectedEndMin > aptStart;
+          });
+
+          if (dbPatientConflict) {
+            const errMsg = `This patient already has an appointment scheduled for ${formData.date} at ${formData.time}. Please select a different date or time.`;
+            setFormError(errMsg);
+            toast.error(errMsg);
+            setIsSaving(false);
+            return;
+          }
+        }
+      } catch (dbErr) {
+        console.warn('Live Supabase slot validation notice:', dbErr);
+      }
+
+      // Prepare complete payload with both snake_case and camelCase for resilient Supabase storage
+      const appointmentPayload = {
+        patient_id: formData.clientId,
+        client_id: formData.clientId,
+        clientId: formData.clientId,
+        patient_name: formData.clientName,
+        client_name: formData.clientName,
+        clientName: formData.clientName,
+        patient_email: formData.clientEmail,
+        client_email: formData.clientEmail,
+        clientEmail: formData.clientEmail,
+        patient_phone: formData.clientPhone,
+        client_phone: formData.clientPhone,
+        clientPhone: formData.clientPhone,
+        treatment_protocol_id: formData.serviceId,
+        service_id: formData.serviceId,
+        serviceId: formData.serviceId,
+        protocol_title: formData.serviceName,
+        service_name: formData.serviceName,
+        serviceName: formData.serviceName,
+        clinician_id: formData.providerId,
+        provider_id: formData.providerId,
+        providerId: formData.providerId,
+        clinician_name: formData.providerName,
+        provider_name: formData.providerName,
+        providerName: formData.providerName,
+        appointment_date: formData.date,
+        date: formData.date,
+        appointment_time: formData.time,
+        time: formData.time,
+        duration: formData.duration,
+        amount: formData.price,
+        price: formData.price,
+        notes: formData.notes || '',
+        // Initial status and payment status are strictly system-driven
+        status: editAppointment ? editAppointment.status : 'Confirmed',
+        payment_status: editAppointment ? (editAppointment.payment_status || editAppointment.paymentStatus || 'Pending') : 'Pending',
+        paymentStatus: editAppointment ? (editAppointment.payment_status || editAppointment.paymentStatus || 'Pending') : 'Pending'
+      };
+
       if (editAppointment) {
+        const updatePayload = {
+          patient_id: formData.clientId,
+          client_id: formData.clientId,
+          patient_name: formData.clientName,
+          client_name: formData.clientName,
+          patient_email: formData.clientEmail,
+          client_email: formData.clientEmail,
+          patient_phone: formData.clientPhone,
+          client_phone: formData.clientPhone,
+          treatment_protocol_id: formData.serviceId,
+          service_id: formData.serviceId,
+          protocol_title: formData.serviceName,
+          service_name: formData.serviceName,
+          clinician_id: formData.providerId,
+          provider_id: formData.providerId,
+          clinician_name: formData.providerName,
+          provider_name: formData.providerName,
+          appointment_date: formData.date,
+          date: formData.date,
+          appointment_time: formData.time,
+          time: formData.time,
+          duration: formData.duration,
+          amount: formData.price,
+          price: formData.price,
+          notes: formData.notes || '',
+          status: editAppointment.status || 'Confirmed',
+          payment_status: editAppointment.payment_status || editAppointment.paymentStatus || 'Pending',
+          updated_at: new Date().toISOString()
+        };
+
+        let upRes = await supabase.from('appointments').update(updatePayload).eq('id', editAppointment.id).select();
+        if (upRes.error) {
+          if (upRes.error.code === '23505' || String(upRes.error.message || '').includes('unique')) {
+            const errMsg = 'This appointment slot has already been reserved. Please choose a different date, time, or clinician.';
+            setFormError(errMsg);
+            toast.error(errMsg);
+            setIsSaving(false);
+            return;
+          }
+          const adminUp = await supabaseAdmin.from('appointments').update(updatePayload).eq('id', editAppointment.id).select();
+          if (adminUp.error && adminUp.error.code === '23505') {
+            const errMsg = 'This appointment slot has already been reserved. Please choose a different date, time, or clinician.';
+            setFormError(errMsg);
+            toast.error(errMsg);
+            setIsSaving(false);
+            return;
+          }
+          if (!adminUp.error && adminUp.data) {
+            upRes = adminUp;
+          }
+        }
+
         await updateItem('appointments', editAppointment.id, appointmentPayload);
         toast.success('Appointment protocol updated successfully.');
         setEditAppointment(null);
+        setIsAddDrawerOpen(false);
       } else {
-        await createItem('appointments', appointmentPayload);
+        const insertPayload = {
+          patient_id: formData.clientId,
+          client_id: formData.clientId,
+          patient_name: formData.clientName,
+          client_name: formData.clientName,
+          patient_email: formData.clientEmail,
+          client_email: formData.clientEmail,
+          patient_phone: formData.clientPhone,
+          client_phone: formData.clientPhone,
+          treatment_protocol_id: formData.serviceId,
+          service_id: formData.serviceId,
+          protocol_title: formData.serviceName,
+          service_name: formData.serviceName,
+          clinician_id: formData.providerId,
+          provider_id: formData.providerId,
+          clinician_name: formData.providerName,
+          provider_name: formData.providerName,
+          appointment_date: formData.date,
+          date: formData.date,
+          appointment_time: formData.time,
+          time: formData.time,
+          duration: formData.duration,
+          amount: formData.price,
+          price: formData.price,
+          notes: formData.notes || '',
+          status: 'Confirmed',
+          payment_status: 'Pending',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+
+        let insData = null;
+        let insRes = await supabase.from('appointments').insert([insertPayload]).select().single();
+        if (!insRes.error && insRes.data) {
+          insData = insRes.data;
+        } else {
+          if (insRes.error && (insRes.error.code === '23505' || String(insRes.error.message || '').includes('unique'))) {
+            const errMsg = 'This appointment slot has already been reserved. Please choose a different date, time, or clinician.';
+            setFormError(errMsg);
+            toast.error(errMsg);
+            setIsSaving(false);
+            return;
+          }
+          const adminIns = await supabaseAdmin.from('appointments').insert([insertPayload]).select().single();
+          if (adminIns.error && (adminIns.error.code === '23505' || String(adminIns.error.message || '').includes('unique'))) {
+            const errMsg = 'This appointment slot has already been reserved. Please choose a different date, time, or clinician.';
+            setFormError(errMsg);
+            toast.error(errMsg);
+            setIsSaving(false);
+            return;
+          }
+          if (!adminIns.error && adminIns.data) {
+            insData = adminIns.data;
+          }
+        }
+
+        await createItem('appointments', insData || appointmentPayload);
         toast.success('New clinical appointment scheduled successfully.');
         setIsAddDrawerOpen(false);
         searchParams.delete('action');
@@ -551,9 +926,14 @@ export const AppointmentsPage = () => {
       }
     } catch (saveErr) {
       console.error('Failed to save appointment:', saveErr);
-      const msg = saveErr.message || 'Failed to save appointment. Please check connection.';
+      let msg = saveErr.message || 'Failed to save appointment. Please check connection.';
+      if (saveErr.code === '23505' || String(msg).toLowerCase().includes('unique') || String(msg).toLowerCase().includes('duplicate')) {
+        msg = 'This appointment slot has already been booked. Please choose a different date, time, or clinician.';
+      }
       setFormError(msg);
       toast.error(msg);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -561,8 +941,16 @@ export const AppointmentsPage = () => {
   const handleDelete = async () => {
     if (deleteConfirmId) {
       try {
+        let delRes = await supabase.from('appointments').delete().eq('id', deleteConfirmId);
+        if (delRes.error) {
+          const adminDel = await supabaseAdmin.from('appointments').delete().eq('id', deleteConfirmId);
+          if (adminDel.error && delRes.error.code !== '22P02') {
+            console.warn('Admin delete notice:', adminDel.error);
+          }
+        }
+
         await deleteItem('appointments', deleteConfirmId);
-        toast.success('Appointment record deleted.');
+        toast.success('Appointment record deleted successfully.');
         setDeleteConfirmId(null);
       } catch (delErr) {
         console.error('Delete appointment error:', delErr);
@@ -574,6 +962,19 @@ export const AppointmentsPage = () => {
   // Change Status handler
   const handleUpdateStatus = async (apptId, newStatus) => {
     try {
+      const statusPayload = {
+        status: newStatus,
+        updated_at: new Date().toISOString()
+      };
+
+      let upRes = await supabase.from('appointments').update(statusPayload).eq('id', apptId).select();
+      if (upRes.error || !upRes.data || upRes.data.length === 0) {
+        const adminUp = await supabaseAdmin.from('appointments').update(statusPayload).eq('id', apptId).select();
+        if (adminUp.error && upRes.error && upRes.error.code !== '22P02') {
+          console.warn('Admin status update notice:', adminUp.error);
+        }
+      }
+
       await updateItem('appointments', apptId, { status: newStatus });
       toast.success(`Appointment status updated to ${newStatus}.`);
       setActionMenuApptId(null);
@@ -585,10 +986,11 @@ export const AppointmentsPage = () => {
   };
 
   // ─────────────────────────────────────────────────────────────
-  // FILTERING & DATE LOGIC
+  // FILTERING & DATE LOGIC (Shared Single Source of Truth with Dashboard)
   // ─────────────────────────────────────────────────────────────
-  const now = new Date();
-  const todayStr = now.toISOString().split('T')[0];
+  // Uses imported appointmentUtils: getAppointmentDateObj, isAppointmentUpcoming,
+  // isAppointmentRecent, isAppointmentToday, isAppointmentThisWeek, isAppointmentThisMonth, getUpcomingAppointments
+
 
   const filteredAppointments = useMemo(() => {
     return appointments.filter((apt) => {
@@ -597,6 +999,10 @@ export const AppointmentsPage = () => {
         !searchTerm ||
         (apt.clientName && apt.clientName.toLowerCase().includes(searchLower)) ||
         (apt.patient_name && apt.patient_name.toLowerCase().includes(searchLower)) ||
+        (apt.clientEmail && apt.clientEmail.toLowerCase().includes(searchLower)) ||
+        (apt.patient_email && apt.patient_email.toLowerCase().includes(searchLower)) ||
+        (apt.clientPhone && apt.clientPhone.toLowerCase().includes(searchLower)) ||
+        (apt.patient_phone && apt.patient_phone.toLowerCase().includes(searchLower)) ||
         (apt.serviceName && apt.serviceName.toLowerCase().includes(searchLower)) ||
         (apt.protocol_title && apt.protocol_title.toLowerCase().includes(searchLower)) ||
         (apt.providerName && apt.providerName.toLowerCase().includes(searchLower)) ||
@@ -616,48 +1022,38 @@ export const AppointmentsPage = () => {
       const matchPayment = paymentFilter === 'ALL' || aptPayment === paymentFilter;
 
       // Date Filtering
-      const aptDateStr = apt.date || apt.appointment_date || '';
       let matchDate = true;
       if (dateFilter === 'TODAY') {
-        matchDate = aptDateStr === todayStr;
+        matchDate = isAppointmentToday(apt);
       } else if (dateFilter === 'THIS_WEEK') {
-        if (!aptDateStr) matchDate = false;
-        else {
-          const aptDate = new Date(aptDateStr);
-          const diffDays = (aptDate - now) / (1000 * 60 * 60 * 24);
-          matchDate = diffDays >= -7 && diffDays <= 7;
-        }
+        matchDate = isAppointmentThisWeek(apt);
       } else if (dateFilter === 'THIS_MONTH') {
-        if (!aptDateStr) matchDate = false;
-        else {
-          const [y, m] = aptDateStr.split('-');
-          matchDate = Number(y) === now.getFullYear() && Number(m) === (now.getMonth() + 1);
-        }
+        matchDate = isAppointmentThisMonth(apt);
       } else if (dateFilter === 'UPCOMING') {
-        matchDate = aptDateStr >= todayStr && aptStatus !== 'Completed' && aptStatus !== 'Cancelled';
+        matchDate = isAppointmentUpcoming(apt);
       } else if (dateFilter === 'RECENT') {
-        matchDate = aptDateStr < todayStr || aptStatus === 'Completed';
+        matchDate = isAppointmentRecent(apt);
       }
 
       // Tab Filtering
       let matchTab = true;
       if (viewTab === 'UPCOMING') {
-        matchTab = aptDateStr >= todayStr && aptStatus !== 'Completed' && aptStatus !== 'Cancelled';
+        matchTab = isAppointmentUpcoming(apt);
       } else if (viewTab === 'RECENT') {
-        matchTab = aptDateStr < todayStr || aptStatus === 'Completed';
+        matchTab = isAppointmentRecent(apt);
       }
 
       return matchSearch && matchStatus && matchService && matchProvider && matchPayment && matchDate && matchTab;
     }).sort((a, b) => {
       // Sorting based on active tab
-      const dateA = a.date || a.appointment_date || '';
-      const dateB = b.date || b.appointment_date || '';
+      const dateA = getAppointmentDateObj(a)?.getTime() || 0;
+      const dateB = getAppointmentDateObj(b)?.getTime() || 0;
       if (viewTab === 'UPCOMING') {
         // Nearest upcoming first
-        return dateA.localeCompare(dateB) || (a.time || '').localeCompare(b.time || '');
+        return dateA - dateB || (a.time || a.appointment_time || '').localeCompare(b.time || b.appointment_time || '');
       }
       // Latest / newest first
-      return dateB.localeCompare(dateA) || (b.time || '').localeCompare(a.time || '');
+      return dateB - dateA || (b.time || b.appointment_time || '').localeCompare(a.time || a.appointment_time || '');
     });
   }, [
     appointments,
@@ -668,25 +1064,21 @@ export const AppointmentsPage = () => {
     paymentFilter,
     dateFilter,
     viewTab,
-    todayStr,
-    now
+    isAppointmentToday,
+    isAppointmentThisWeek,
+    isAppointmentThisMonth,
+    isAppointmentUpcoming,
+    isAppointmentRecent,
+    getAppointmentDateObj
   ]);
 
   const upcomingCount = useMemo(() => {
-    return appointments.filter(a => {
-      const d = a.date || a.appointment_date || '';
-      const st = a.status || 'Confirmed';
-      return d >= todayStr && st !== 'Completed' && st !== 'Cancelled';
-    }).length;
-  }, [appointments, todayStr]);
+    return getUpcomingAppointments(appointments).length;
+  }, [appointments]);
 
   const recentCount = useMemo(() => {
-    return appointments.filter(a => {
-      const d = a.date || a.appointment_date || '';
-      const st = a.status || 'Confirmed';
-      return d < todayStr || st === 'Completed';
-    }).length;
-  }, [appointments, todayStr]);
+    return appointments.filter(isAppointmentRecent).length;
+  }, [appointments, isAppointmentRecent]);
 
   const hasActiveFilters =
     Boolean(searchTerm) ||
@@ -808,9 +1200,23 @@ export const AppointmentsPage = () => {
                   setStatusSubmenuId(null);
                 } else {
                   const rect = e.currentTarget.getBoundingClientRect();
+                  // Responsive positioning: estimate dropdown height (~220px worst-case with status submenu)
+                  const DROPDOWN_HEIGHT = 260;
+                  const DROPDOWN_WIDTH = 180;
+                  const spaceBelow = window.innerHeight - rect.bottom - 8;
+                  const spaceAbove = rect.top - 8;
+                  // Prefer opening below; flip above if insufficient space below
+                  const openAbove = spaceBelow < DROPDOWN_HEIGHT && spaceAbove >= DROPDOWN_HEIGHT;
+                  const topPos = openAbove
+                    ? Math.max(8, rect.top - DROPDOWN_HEIGHT)
+                    : rect.bottom + 4;
+                  // Clamp right so dropdown never overflows the left edge on narrow screens
+                  const naturalRight = window.innerWidth - rect.right;
+                  const clampedRight = Math.max(8, Math.min(naturalRight, window.innerWidth - DROPDOWN_WIDTH - 8));
                   setActionMenuPosition({
-                    top: rect.bottom + 4,
-                    right: window.innerWidth - rect.right
+                    top: topPos,
+                    right: clampedRight,
+                    openAbove
                   });
                   setActionMenuApptId(row.id);
                   setStatusSubmenuId(null);
@@ -841,6 +1247,9 @@ export const AppointmentsPage = () => {
                   top: `${actionMenuPosition.top}px`,
                   right: `${actionMenuPosition.right}px`,
                   width: '180px',
+                  maxWidth: 'calc(100vw - 16px)',
+                  maxHeight: 'calc(100vh - 24px)',
+                  overflowY: 'auto',
                   background: '#ffffff',
                   border: '1px solid #e2e8f0',
                   borderRadius: '10px',
@@ -945,7 +1354,7 @@ export const AppointmentsPage = () => {
                     onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
                   >
                     <CreditCard size={15} color="#16a34a" />
-                    <span>Pay Now (Stripe)</span>
+                    <span>Pay Now</span>
                   </button>
                 )}
 
@@ -994,7 +1403,7 @@ export const AppointmentsPage = () => {
                         gap: '2px'
                       }}
                     >
-                      {['Confirmed', 'Completed', 'Scheduled', 'Cancelled', 'No Show', 'Rescheduled'].map((st) => (
+                      {['Confirmed', 'Completed', 'Scheduled', 'Cancelled', 'Rescheduled'].map((st) => (
                         <button
                           key={st}
                           type="button"
@@ -1073,7 +1482,8 @@ export const AppointmentsPage = () => {
           <p>Schedule, monitor, and manage clinical consultations and treatment protocols.</p>
         </div>
 
-        <div className="admin-page-actions">
+        <div className="admin-page-actions" style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+
           <AdminButton
             variant="primary"
             onClick={handleOpenAddDrawer}
@@ -1189,7 +1599,6 @@ export const AppointmentsPage = () => {
               { label: 'Completed', value: 'Completed' },
               { label: 'Pending', value: 'Pending' },
               { label: 'Cancelled', value: 'Cancelled' },
-              { label: 'No Show', value: 'No Show' },
               { label: 'Rescheduled', value: 'Rescheduled' }
             ]
           },
@@ -1224,6 +1633,9 @@ export const AppointmentsPage = () => {
         columns={columns}
         data={filteredAppointments}
         loading={isLoading}
+        showLoadingBar={false}
+        showSkeleton={false}
+        loadingMessage="Loading appointments..."
         itemsPerPage={10}
         emptyTitle="No appointments match your filters"
         emptyDescription="Try adjusting your search criteria, dates, or booking a new clinical appointment."
@@ -1251,10 +1663,12 @@ export const AppointmentsPage = () => {
             <AdminButton
               variant="secondary"
               onClick={() => {
+                if (isSaving) return;
                 setIsAddDrawerOpen(false);
                 setEditAppointment(null);
                 setFormError(null);
               }}
+              disabled={isSaving}
             >
               Cancel
             </AdminButton>
@@ -1262,8 +1676,10 @@ export const AppointmentsPage = () => {
               type="submit"
               form="appointment-drawer-form"
               variant="primary"
+              disabled={isSaving}
+              loading={isSaving}
             >
-              {editAppointment ? "Update Appointment" : "Confirm & Save Appointment"}
+              {isSaving ? "Saving..." : (editAppointment ? "Update Appointment" : "Confirm & Save Appointment")}
             </AdminButton>
           </div>
         }
@@ -1529,7 +1945,14 @@ export const AppointmentsPage = () => {
         onClose={() => setPayNowAppointment(null)}
         appointment={payNowAppointment}
         onPaymentSuccess={(updated) => {
-          // Local update will also be synchronized via AdminDataContext and Supabase
+          if (updateItem && updated?.id) {
+            updateItem('appointments', updated.id, {
+              payment_status: 'Paid',
+              paymentStatus: 'Paid',
+              stripe_payment_intent_id: updated.stripe_payment_intent_id
+            });
+          }
+          setPayNowAppointment(null);
         }}
       />
 

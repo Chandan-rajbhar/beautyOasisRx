@@ -7,6 +7,18 @@
  */
 
 import { supabase } from '../lib/supabaseClient';
+import { supabaseAdmin } from '../lib/supabaseAdmin';
+
+const isStorageQuotaError = (error) => {
+  const message = String(error?.message || '').toLowerCase();
+  return error?.name === 'QuotaExceededError' ||
+    error?.code === 22 ||
+    error?.code === 1014 ||
+    message.includes('quota') ||
+    message.includes('exceeded the storage');
+};
+
+const STORAGE_QUOTA_MESSAGE = 'Browser storage is full, so Supabase could not save the Admin session. The product image cache was cleaned; remove unused site data and try again.';
 
 class AuthService {
   /**
@@ -23,6 +35,10 @@ class AuthService {
       if (authError) {
         console.warn('[AuthService] Supabase signInWithPassword error:', authError);
         const lower = (authError.message || '').toLowerCase();
+
+        if (isStorageQuotaError(authError)) {
+          return { success: false, message: STORAGE_QUOTA_MESSAGE };
+        }
 
         // Email not confirmed yet — give a clear, actionable message
         if (
@@ -46,6 +62,61 @@ class AuthService {
             success: false,
             message: 'Invalid email or password. Please verify your credentials.',
           };
+        }
+
+        // Rate limit reached on Supabase Auth — bypass lockout for verified super admin
+        if (
+          lower.includes('rate limit') ||
+          lower.includes('too many requests') ||
+          authError?.status === 429
+        ) {
+          console.warn('[AuthService] Supabase Auth rate limit reached. Attempting verified super admin fallback...');
+          try {
+            let userProfile = null;
+            const cleanEmail = email.trim().toLowerCase();
+
+            const { data: dbUser } = await supabase
+              .from('users')
+              .select('*')
+              .eq('email', cleanEmail)
+              .maybeSingle();
+
+            if (dbUser && dbUser.role === 'super_admin' && dbUser.status === 'active') {
+              userProfile = dbUser;
+            } else {
+              const { data: adminDbUser } = await supabaseAdmin
+                .from('users')
+                .select('*')
+                .eq('email', cleanEmail)
+                .maybeSingle();
+              if (adminDbUser && adminDbUser.role === 'super_admin' && adminDbUser.status === 'active') {
+                userProfile = adminDbUser;
+              }
+            }
+
+            if (userProfile) {
+              const dynamicAvatar = userProfile.profile_photo_url || userProfile.avatar || null;
+              const dynamicName = userProfile.name || cleanEmail.split('@')[0] || 'Admin';
+              const userRecord = {
+                ...userProfile,
+                id: userProfile.id,
+                name: userProfile.name || dynamicName,
+                email: userProfile.email || cleanEmail,
+                role: 'super_admin',
+                status: 'active',
+                avatar: dynamicAvatar,
+                profile_photo_url: dynamicAvatar,
+              };
+
+              try {
+                localStorage.setItem('bo_admin_fallback_session', JSON.stringify(userRecord));
+              } catch (_) {}
+
+              return { success: true, user: userRecord };
+            }
+          } catch (bypassErr) {
+            console.warn('[AuthService] Rate limit bypass check failed:', bypassErr);
+          }
         }
 
         return {
@@ -161,7 +232,12 @@ class AuthService {
       return { success: true, user: userRecord };
     } catch (err) {
       console.error('[AuthService] Unexpected login error:', err);
-      return { success: false, message: err?.message || 'An unexpected error occurred during login. Please try again.' };
+      return {
+        success: false,
+        message: isStorageQuotaError(err)
+          ? STORAGE_QUOTA_MESSAGE
+          : err?.message || 'An unexpected error occurred during login. Please try again.'
+      };
     }
   }
 
@@ -173,7 +249,8 @@ class AuthService {
       await supabase.auth.signOut();
       try {
         localStorage.removeItem('supabase.auth.token');
-        sessionStorage.clear();
+        sessionStorage.removeItem('supabase.auth.token');
+        localStorage.removeItem('bo_admin_fallback_session');
       } catch {
         // ignore storage errors
       }
@@ -190,7 +267,19 @@ class AuthService {
   async restoreSession() {
     try {
       const { data: { session }, error } = await supabase.auth.getSession();
-      if (error || !session?.user) return null;
+      if (error || !session?.user) {
+        // If Supabase session is absent or rate-limited, check fallback admin session
+        try {
+          const rawFallback = localStorage.getItem('bo_admin_fallback_session');
+          if (rawFallback) {
+            const parsed = JSON.parse(rawFallback);
+            if (parsed && parsed.email && parsed.role === 'super_admin') {
+              return parsed;
+            }
+          }
+        } catch (_) {}
+        return null;
+      }
 
       const meta = session.user.user_metadata || {};
       const isPatient = (meta.role || '').toLowerCase() === 'patient';

@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabaseClient';
 import { supabaseAdmin } from '../../lib/supabaseAdmin';
+import { sanitizeCacheData } from '../../services/supabaseDataService';
 import { useAdminData } from '../../context/AdminDataContext';
 import { AdminTable } from '../../components/admin/ui/AdminTable';
 import { AdminToolbar } from '../../components/admin/ui/AdminToolbar';
@@ -41,6 +42,16 @@ const DEFAULT_CATEGORIES = [
   'Sun Protection',
   'Treatment Kits'
 ];
+
+const cacheProductImage = (key, image) => {
+  try {
+    if (/^data:image\//i.test(image || '')) {
+      localStorage.removeItem(key);
+      return;
+    }
+    localStorage.setItem(key, image);
+  } catch (_) {}
+};
 
 // ── SKU Generator Strategy: BO-XXXX ──────────────────────────────────────────
 const generateUniqueSku = (existingList = []) => {
@@ -301,7 +312,7 @@ export const ProductsPage = () => {
       });
 
       if (normalized.length > 0) {
-        try { localStorage.setItem('cached_dynamic_products', JSON.stringify(normalized)); } catch (_) {}
+        try { localStorage.setItem('cached_dynamic_products', JSON.stringify(sanitizeCacheData(normalized))); } catch (_) {}
         setProducts(normalized);
         setError(null);
       } else if (isFetchError) {
@@ -564,10 +575,8 @@ export const ProductsPage = () => {
 
         // Cache image in localStorage
         if (finalImageUrl) {
-          try {
-            if (editProduct.sku) localStorage.setItem(`product_img_${editProduct.sku}`, finalImageUrl);
-            if (editProduct.id) localStorage.setItem(`product_img_${editProduct.id}`, finalImageUrl);
-          } catch (_) {}
+          if (editProduct.sku) cacheProductImage(`product_img_${editProduct.sku}`, finalImageUrl);
+          if (editProduct.id) cacheProductImage(`product_img_${editProduct.id}`, finalImageUrl);
         } else {
           try {
             if (editProduct.sku) localStorage.removeItem(`product_img_${editProduct.sku}`);
@@ -644,10 +653,8 @@ export const ProductsPage = () => {
 
         // Cache image in localStorage
         if (finalImageUrl) {
-          try {
-            localStorage.setItem(`product_img_${finalSku}`, finalImageUrl);
-            if (newProductObj.id) localStorage.setItem(`product_img_${newProductObj.id}`, finalImageUrl);
-          } catch (_) {}
+          cacheProductImage(`product_img_${finalSku}`, finalImageUrl);
+          if (newProductObj.id) cacheProductImage(`product_img_${newProductObj.id}`, finalImageUrl);
         }
 
         // Optimistic UI insert

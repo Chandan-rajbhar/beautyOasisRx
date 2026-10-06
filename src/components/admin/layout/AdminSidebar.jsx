@@ -3,6 +3,7 @@ import { NavLink, Link, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   Calendar,
+  Clock,
   Users,
   Sparkles,
   ShoppingBag,
@@ -17,6 +18,7 @@ import {
   LogOut,
   X,
 } from 'lucide-react';
+
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import { useAdminData } from '../../../context/AdminDataContext';
 import { AdminLogoutDialog } from '../ui/AdminLogoutDialog';
@@ -68,7 +70,8 @@ export const AdminSidebar = ({
       label: "Clinical & Practice",
       items: [
         { label: "Dashboard", path: "/dashboard", icon: <LayoutDashboard size={18} />, permission: "all" },
-        { label: "Appointments", path: "/appointments", icon: <Calendar size={18} />, badge: stats.todayAppointmentsCount || null, permission: "appointments" },
+        { label: "Appointments", path: "/appointments", icon: <Calendar size={18} />, permission: "appointments" },
+        { label: "Appointment Times", path: "/appointment-times", icon: <Clock size={18} />, permission: "appointments" },
         { label: "Clients / Patients", path: "/clients", icon: <Users size={18} />, permission: "clients" },
         { label: "Treatments & Services", path: "/services", icon: <Sparkles size={18} />, permission: "services" },
         { label: "Staff & Providers", path: "/providers", icon: <UserCheck size={18} />, permission: "providers" }

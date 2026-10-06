@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useLocation, Link, useNavigate } from 'react-router-dom';
 import {
   Menu,
@@ -17,6 +17,7 @@ import {
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import { useAdminData } from '../../../context/AdminDataContext';
 import { AdminNotificationDropdown } from '../ui/AdminNotificationDropdown';
+import { isStaticNotification, deduplicateNotifications } from '../../../services/notificationService';
 
 export const AdminHeader = ({
   onToggleSidebar,
@@ -28,9 +29,26 @@ export const AdminHeader = ({
   onRequestLogout
 }) => {
   const { user, logout } = useAdminAuth();
-  const { stats } = useAdminData();
+  const { stats, notifications = [] } = useAdminData();
   const location = useLocation();
   const navigate = useNavigate();
+
+  const unreadNotificationCount = useMemo(() => {
+    let list = [];
+    if (Array.isArray(notifications)) {
+      list = notifications;
+    } else {
+      try {
+        const cached = localStorage.getItem('bo_cache_notifications');
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed)) list = parsed;
+        }
+      } catch (_) {}
+    }
+    const realList = deduplicateNotifications(list.filter(n => !isStaticNotification(n)));
+    return realList.filter(n => !n.is_read && !n.read).length;
+  }, [notifications]);
 
   const userPhoto = user?.profile_photo_url || user?.avatar || null;
   const userName = user?.name || (user?.email ? user.email.split('@')[0] : 'Admin');
@@ -66,6 +84,9 @@ export const AdminHeader = ({
     return path.charAt(0).toUpperCase() + path.slice(1).replace('-', ' ');
   };
 
+  const isPatientProfile = location.pathname.includes('/patients/') || (location.pathname.includes('/clients/') && location.pathname.split('/').filter(Boolean).length > 1 && location.pathname.split('/').filter(Boolean)[0] !== 'admin');
+  const isOrderDetails = location.pathname.includes('/orders/') && location.pathname.split('/').filter(Boolean).length >= 2;
+
   return (
     <header className="admin-header">
       {/* Header Left with Side Drawer Icon */}
@@ -82,7 +103,21 @@ export const AdminHeader = ({
         <div className="admin-breadcrumbs">
           <Link to="/dashboard" className="admin-breadcrumb-home">Dashboard</Link>
           <span className="admin-breadcrumb-sep">/</span>
-          <span className="admin-breadcrumbs-current">{getBreadcrumbTitle()}</span>
+          {isPatientProfile ? (
+            <>
+              <Link to="/clients" className="admin-breadcrumb-home">Clients</Link>
+              <span className="admin-breadcrumb-sep">/</span>
+              <span className="admin-breadcrumbs-current">Patient Profile</span>
+            </>
+          ) : isOrderDetails ? (
+            <>
+              <Link to="/orders" className="admin-breadcrumb-home">Orders</Link>
+              <span className="admin-breadcrumb-sep">/</span>
+              <span className="admin-breadcrumbs-current">Order Details</span>
+            </>
+          ) : (
+            <span className="admin-breadcrumbs-current">{getBreadcrumbTitle()}</span>
+          )}
         </div>
       </div>
 
@@ -177,11 +212,12 @@ export const AdminHeader = ({
             className="admin-header-icon-btn"
             onClick={() => setNotifOpen(!notifOpen)}
             title="Notifications"
+            aria-label={`Notifications (${unreadNotificationCount} unread)`}
           >
             <Bell size={18} />
-            {stats.unreadNotificationsCount > 0 && (
+            {unreadNotificationCount > 0 && (
               <span className="admin-notif-pill">
-                {stats.unreadNotificationsCount}
+                {unreadNotificationCount > 99 ? '99+' : unreadNotificationCount}
               </span>
             )}
           </button>

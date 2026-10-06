@@ -10,7 +10,9 @@ export const AdminCard = ({
   iconColor = '#1e5aa8',
   trend = null, // e.g. { value: "+14.2%", isPositive: true, text: "vs last month" }
   onClick,
-  style = {}
+  style = {},
+  valueStyle = {},
+  children
 }) => {
   return (
     <div
@@ -33,7 +35,11 @@ export const AdminCard = ({
         )}
       </div>
 
-      <div className="admin-card-value">{value}</div>
+      {value !== undefined && value !== null && (
+        <div className="admin-card-value" style={valueStyle}>{value}</div>
+      )}
+
+      {children}
 
       <div className="admin-card-meta">
         {trend && (

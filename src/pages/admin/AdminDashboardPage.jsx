@@ -1,59 +1,250 @@
-import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import React, { useState, useMemo, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Calendar,
   Users,
   DollarSign,
   Sparkles,
-  Eye,
-  Edit2,
-  Trash2,
-  XCircle,
   Plus,
-  ArrowRight,
   Clock,
-  CheckCircle,
-  AlertCircle
+  AlertCircle,
+  Activity,
+  ShoppingBag,
+  MessageSquare,
+  UserCheck,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import { useAdminData } from '../../context/AdminDataContext';
 import { AdminCard } from '../../components/admin/ui/AdminCard';
-import { AdminBadge } from '../../components/admin/ui/AdminBadge';
 import { AdminButton } from '../../components/admin/ui/AdminButton';
-import { AdminDrawer } from '../../components/admin/ui/AdminDrawer';
-import { AdminModal } from '../../components/admin/ui/AdminModal';
-import { AdminConfirmDialog } from '../../components/admin/ui/AdminConfirmDialog';
 import { DashboardCharts } from '../../components/admin/charts/DashboardCharts';
+import { formatActivityTime, deriveActivityLogsFromData } from '../../services/activityLogService';
+import { getUpcomingAppointments, isAppointmentToday } from '../../utils/appointmentUtils';
 
 export const AdminDashboardPage = () => {
-  const { appointments, clients, payments, services, stats, updateItem, deleteItem } = useAdminData();
+  const {
+    appointments = [],
+    clients = [],
+    payments = [],
+    services = [],
+    orders = [],
+    inquiries = [],
+    providers = [],
+    activityLogs = [],
+    stats = {},
+    isLoading = false,
+    error = null,
+    resetToFactoryData
+  } = useAdminData();
   const navigate = useNavigate();
 
-  // Selected item states
-  const [selectedAppointment, setSelectedAppointment] = useState(null);
-  const [editAppointment, setEditAppointment] = useState(null);
-  const [deleteConfirmId, setDeleteConfirmId] = useState(null);
+  // Pagination state for Recent Activity (max 20 per page)
+  const [activityPage, setActivityPage] = useState(1);
+  const ACTIVITIES_PER_PAGE = 20;
 
-  // Recent Appointments slice
-  const recentAppointments = appointments.slice(0, 6);
+  // 100% dynamic upcoming appointments count synchronized with Appointments module
+  const dynamicUpcomingCount = useMemo(() => {
+    return getUpcomingAppointments(appointments).length;
+  }, [appointments]);
 
-  const handleUpdateStatus = (status, paymentStatus) => {
-    if (!editAppointment) return;
-    updateItem('appointments', editAppointment.id, {
-      status,
-      paymentStatus: paymentStatus || editAppointment.paymentStatus
+  // 100% dynamic today appointments count synchronized with Supabase appointments
+  const dynamicTodayCount = useMemo(() => {
+    return appointments.filter(isAppointmentToday).length;
+  }, [appointments]);
+
+
+  // Dynamic Total New Leads count from existing Firebase / local / Supabase leads
+  const { totalNewLeadsCount, totalLeadsCount } = useMemo(() => {
+    let combinedLeads = Array.isArray(inquiries) ? [...inquiries] : [];
+
+    // Also include any cached leads from Firebase or browser persistence
+    try {
+      const candidateKeys = ['firebase_leads', 'leads', 'bo_inquiries_dynamic_cache', 'bo_leads'];
+      candidateKeys.forEach(k => {
+        const raw = localStorage.getItem(k);
+        if (raw) {
+          const list = JSON.parse(raw);
+          if (Array.isArray(list)) {
+            list.forEach(item => {
+              if (item && !combinedLeads.some(e => (e.id && e.id === item.id) || (e.ticket_id && e.ticket_id === item.ticket_id))) {
+                combinedLeads.push(item);
+              }
+            });
+          }
+        }
+      });
+    } catch (_) {}
+
+    const newLeads = combinedLeads.filter(item => {
+      const st = String(item.status || '').toLowerCase().trim();
+      return st === 'new' || st === 'unread' || st === 'pending' || st === 'open';
     });
-    setEditAppointment(null);
+
+    const newCount = newLeads.length || (stats.newInquiriesCount ?? 0);
+    return {
+      totalNewLeadsCount: newCount,
+      totalLeadsCount: combinedLeads.length || newCount
+    };
+  }, [inquiries, stats.newInquiriesCount]);
+
+  // Dynamic Recent Activity logs from Supabase with resilient live fallback
+  const allActivities = useMemo(() => {
+    if (Array.isArray(activityLogs) && activityLogs.length > 0) {
+      return activityLogs;
+    }
+    return deriveActivityLogsFromData({ appointments, clients, payments, orders, inquiries });
+  }, [activityLogs, appointments, clients, payments, orders, inquiries]);
+
+  const totalActivities = allActivities.length;
+  const totalActivityPages = Math.ceil(totalActivities / ACTIVITIES_PER_PAGE);
+
+  // Auto-correct activityPage if it goes beyond totalActivityPages
+  useEffect(() => {
+    if (activityPage > totalActivityPages && totalActivityPages > 0) {
+      setActivityPage(totalActivityPages);
+    }
+  }, [totalActivityPages, activityPage]);
+
+  // Paginated activities slice for the current page
+  const paginatedActivities = useMemo(() => {
+    const start = (activityPage - 1) * ACTIVITIES_PER_PAGE;
+    return allActivities.slice(start, start + ACTIVITIES_PER_PAGE);
+  }, [allActivities, activityPage]);
+
+  // Navigate to appropriate module / detail page based on activity type
+  const handleActivityClick = (act) => {
+    if (!act) return;
+    const type = String(act.entity_type || '').toLowerCase();
+    const id = act.entity_id || act.entityId || act.metadata?.entity_id || act.metadata?.id;
+
+    switch (type) {
+      case 'patient':
+      case 'client':
+        if (id) {
+          navigate(`/clients/${encodeURIComponent(id)}`, { state: { patientId: id } });
+        } else {
+          navigate('/clients');
+        }
+        break;
+
+      case 'appointment':
+        navigate(id ? `/appointments?id=${encodeURIComponent(id)}` : '/appointments', {
+          state: { selectedAppointmentId: id, highlightId: id }
+        });
+        break;
+
+      case 'payment':
+        navigate(id ? `/payments?id=${encodeURIComponent(id)}` : '/payments', {
+          state: { selectedPaymentId: id, highlightId: id }
+        });
+        break;
+
+      case 'order':
+        if (id) {
+          navigate(`/orders/${encodeURIComponent(id)}`, { state: { selectedOrderId: id } });
+        } else {
+          navigate('/orders');
+        }
+        break;
+
+      case 'treatment':
+      case 'service':
+        navigate('/services', { state: { serviceId: id } });
+        break;
+
+      case 'inquiry':
+      case 'ticket':
+        navigate('/inquiries', { state: { selectedInquiryId: id, highlightId: id } });
+        break;
+
+      default:
+        navigate('/dashboard');
+        break;
+    }
   };
 
-  const handleDeleteConfirm = () => {
-    if (deleteConfirmId) {
-      deleteItem('appointments', deleteConfirmId);
-      setDeleteConfirmId(null);
+  const getActivityIcon = (entityType) => {
+    const t = String(entityType || '').toLowerCase();
+    switch (t) {
+      case 'appointment':
+        return <Calendar size={18} />;
+      case 'patient':
+      case 'client':
+        return <Users size={18} />;
+      case 'payment':
+        return <DollarSign size={18} />;
+      case 'order':
+        return <ShoppingBag size={18} />;
+      case 'treatment':
+      case 'service':
+        return <Sparkles size={18} />;
+      case 'inquiry':
+        return <MessageSquare size={18} />;
+      default:
+        return <Activity size={18} />;
+    }
+  };
+
+  const getActivityIconColor = (entityType) => {
+    const t = String(entityType || '').toLowerCase();
+    switch (t) {
+      case 'appointment':
+        return '#1e5aa8';
+      case 'patient':
+      case 'client':
+        return '#16a34a';
+      case 'payment':
+        return '#0284c7';
+      case 'order':
+        return '#d97706';
+      case 'treatment':
+      case 'service':
+        return '#db2777';
+      case 'inquiry':
+        return '#eab308';
+      default:
+        return '#475569';
+    }
+  };
+
+  const getActivityIconBg = (entityType) => {
+    const t = String(entityType || '').toLowerCase();
+    switch (t) {
+      case 'appointment':
+        return '#f0f7ff';
+      case 'patient':
+      case 'client':
+        return '#f0fdf4';
+      case 'payment':
+        return '#f0f9ff';
+      case 'order':
+        return '#fffbeb';
+      case 'treatment':
+      case 'service':
+        return '#fdf2f8';
+      case 'inquiry':
+        return '#fefce8';
+      default:
+        return '#f1f5f9';
     }
   };
 
   return (
-    <div>
+    <div style={{ maxWidth: '100%', margin: '0 auto' }}>
+      {/* ── Optional Error Notice ── */}
+      {error && (
+        <div style={{ padding: '12px 18px', borderRadius: '10px', background: '#fef2f2', border: '1px solid #fecaca', color: '#b91c1c', marginBottom: '20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.86rem' }}>
+            <AlertCircle size={16} />
+            <span>{error}</span>
+          </div>
+          <button onClick={resetToFactoryData} style={{ background: 'transparent', border: 'none', color: '#b91c1c', textDecoration: 'underline', cursor: 'pointer', fontSize: '0.8rem', fontWeight: 600 }}>
+            Retry connection
+          </button>
+        </div>
+      )}
+
       {/* ── Top Page Header ── */}
       <div className="admin-page-header">
         <div className="admin-page-title">
@@ -80,400 +271,307 @@ export const AdminDashboardPage = () => {
         </div>
       </div>
 
-      {/* ── Core Metric Cards Grid ── */}
-      <div className="admin-stats-grid">
-        {/* Appointments Today */}
-        <AdminCard
-          title="Today's Appointments"
-          value={stats.todayAppointmentsCount}
-          subtitle={`${stats.upcomingAppointmentsCount} upcoming this week`}
-          icon={<Calendar size={20} />}
-          iconBg="#f0fdf4"
-          iconColor="#16a34a"
-          trend={{ value: "+8%", isPositive: true, text: "vs yesterday" }}
-          onClick={() => navigate('/appointments')}
-        />
+      {/* ── Core Metric Cards Grid (Balanced 4-col / 3-col KPI Layout) ── */}
+      <div className="admin-stats-grid admin-dashboard-stats-grid">
+        {isLoading ? (
+          Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="admin-card" style={{ padding: '16px 20px' }}>
+              <div className="admin-card-header" style={{ marginBottom: '10px' }}>
+                <div style={{ height: '13px', width: '55%', background: '#e2e8f0', borderRadius: '4px', animation: 'shimmer 1.4s infinite' }} />
+                <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: '#e2e8f0', animation: 'shimmer 1.4s infinite' }} />
+              </div>
+              <div style={{ height: '26px', width: '40%', background: '#e2e8f0', borderRadius: '6px', marginBottom: '6px', animation: 'shimmer 1.4s infinite' }} />
+              <div style={{ height: '12px', width: '65%', background: '#f1f5f9', borderRadius: '4px', animation: 'shimmer 1.4s infinite' }} />
+            </div>
+          ))
+        ) : (
+          <>
+            {/* 1. Total Appointments */}
+            <AdminCard
+              title="Total Appointments"
+              value={appointments.length || stats.totalAppointmentsCount || 0}
+              subtitle={`${dynamicTodayCount} today • ${dynamicUpcomingCount} upcoming`}
+              icon={<Calendar size={18} />}
+              iconBg="#f0fdf4"
+              iconColor="#16a34a"
+              onClick={() => navigate('/appointments')}
+            />
 
-        {/* Total Active Clients */}
-        <AdminCard
-          title="Total Patients / Clients"
-          value={stats.totalClientsCount}
-          subtitle={`${stats.newClientsCount} joined this month`}
-          icon={<Users size={20} />}
-          iconBg="#f0f7ff"
-          iconColor="#1e5aa8"
-          trend={{ value: "+12.4%", isPositive: true, text: "monthly growth" }}
-          onClick={() => navigate('/clients')}
-        />
+            {/* 2. Total Upcoming Appointments (100% dynamic from Supabase) */}
+            <AdminCard
+              title="Total Upcoming Appointments"
+              value={dynamicUpcomingCount}
+              subtitle={`${stats.pendingAppointmentsCount ?? 0} pending confirmation`}
+              icon={<Clock size={18} />}
+              iconBg="#eff6ff"
+              iconColor="#2563eb"
+              onClick={() => navigate('/appointments?tab=upcoming')}
+            />
 
-        {/* Practice Revenue */}
-        <AdminCard
-          title="Practice Revenue"
-          value={`$${stats.totalRevenue.toLocaleString()}`}
-          subtitle={`$${stats.pendingRevenue.toLocaleString()} pending collections`}
-          icon={<DollarSign size={20} />}
-          iconBg="#fefce8"
-          iconColor="#ca8a04"
-          trend={{ value: "+19.5%", isPositive: true, text: "vs last cycle" }}
-          onClick={() => navigate('/payments')}
-        />
+            {/* 3. Total Patients / Clients */}
+            <AdminCard
+              title="Total Patients / Clients"
+              value={stats.totalClientsCount ?? clients.length}
+              subtitle={`${stats.activeClientsCount ?? stats.totalClientsCount ?? clients.length} active in registry`}
+              icon={<Users size={18} />}
+              iconBg="#f0f7ff"
+              iconColor="#1e5aa8"
+              onClick={() => navigate('/clients')}
+            />
 
-        {/* Active Protocols */}
-        <AdminCard
-          title="Active Treatments"
-          value={stats.activeServicesCount}
-          subtitle={`${stats.totalServicesCount} total published protocols`}
-          icon={<Sparkles size={20} />}
-          iconBg="#fdf2f8"
-          iconColor="#db2777"
-          onClick={() => navigate('/services')}
-        />
+            {/* 4. Total Revenue */}
+            <AdminCard
+              title="Total Revenue"
+              value={`$${Number(stats.totalRevenue ?? 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })}`}
+              subtitle={`$${Number(stats.pendingRevenue ?? 0).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 2 })} pending collections`}
+              icon={<DollarSign size={18} />}
+              iconBg="#fefce8"
+              iconColor="#ca8a04"
+              valueStyle={{
+                fontSize: '1.45rem',
+                fontWeight: 700,
+                lineHeight: 1.15,
+                letterSpacing: '-0.02em',
+                whiteSpace: 'nowrap',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis'
+              }}
+              onClick={() => navigate('/payments')}
+            />
+
+            {/* 5. Total Orders */}
+            <AdminCard
+              title="Total Orders"
+              value={stats.totalOrdersCount ?? (orders ? orders.length : 0)}
+              subtitle={`${stats.pendingOrdersCount ?? 0} pending fulfillment`}
+              icon={<ShoppingBag size={18} />}
+              iconBg="#f5f3ff"
+              iconColor="#7c3aed"
+              onClick={() => navigate('/orders')}
+            />
+
+            {/* 6. Total New Leads (Dynamic from Firebase / Inquiries lead data) */}
+            <AdminCard
+              title="Total New Leads"
+              value={totalNewLeadsCount}
+              subtitle={`${totalLeadsCount} total inquiry leads • Inquiries & Leads`}
+              icon={<MessageSquare size={18} />}
+              iconBg="#fefce8"
+              iconColor="#ca8a04"
+              onClick={() => navigate('/inquiries')}
+            />
+
+            {/* 7. Active Treatments / Services */}
+            <AdminCard
+              title="Active Treatments / Services"
+              value={stats.activeServicesCount ?? services.length}
+              subtitle={`${stats.totalServicesCount ?? services.length} total published protocols`}
+              icon={<Sparkles size={18} />}
+              iconBg="#fdf2f8"
+              iconColor="#db2777"
+              onClick={() => navigate('/services')}
+            />
+
+            {/* 8. Staff & Providers */}
+            <AdminCard
+              title="Staff & Providers"
+              value={providers.length || 0}
+              subtitle={`${providers.filter(p => p.status !== 'Inactive').length || providers.length || 0} active specialists`}
+              icon={<UserCheck size={18} />}
+              iconBg="#f0fdf4"
+              iconColor="#16a34a"
+              onClick={() => navigate('/providers')}
+            />
+          </>
+        )}
       </div>
 
-      {/* ── Interactive Charts ── */}
+      {/* ── Dynamic Revenue Overview Section ── */}
       <DashboardCharts
         appointments={appointments}
         payments={payments}
         services={services}
+        isLoading={isLoading}
       />
 
-      {/* ── Section: Recent Appointments Table ── */}
+      {/* ── Section: Recent Activity Audit Feed (with Dynamic Pagination) ── */}
       <div style={{ marginTop: '32px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
           <div>
-            <h2 style={{ fontFamily: 'var(--font-serif-display)', fontSize: '1.4rem', color: '#0f2942', margin: 0 }}>
-              Recent Appointments
+            <h2 style={{ fontFamily: 'var(--font-serif-display)', fontSize: '1.35rem', color: '#0f2942', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Activity size={20} color="#1e5aa8" /> Recent Activity
             </h2>
             <p style={{ margin: '2px 0 0 0', fontSize: '0.84rem', color: '#64748b' }}>
-              Latest patient consultations and clinical protocol sessions
+              Real-time audit log of client registrations, consultations, payments, and clinic operations
             </p>
           </div>
 
-          <Link
-            to="/appointments"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              fontSize: '0.84rem',
-              color: '#1e5aa8',
-              fontWeight: 600,
-              textDecoration: 'none'
-            }}
-          >
-            <span>View All Appointments</span>
-            <ArrowRight size={14} />
-          </Link>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            {totalActivities > 0 && (
+              <span style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: 500 }}>
+                {totalActivities} {totalActivities === 1 ? 'event' : 'events'} recorded
+              </span>
+            )}
+            <span style={{ fontSize: '0.78rem', color: '#16a34a', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '6px', background: '#f0fdf4', padding: '4px 10px', borderRadius: '9999px', border: '1px solid #bbf7d0' }}>
+              <span style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#16a34a', display: 'inline-block' }} /> Live Supabase Feed
+            </span>
+          </div>
         </div>
 
-        {/* Table Container */}
-        <div className="admin-table-container">
-          <div className="admin-table-scroll">
-            <table className="admin-table">
-              <thead>
-                <tr>
-                  <th>Client</th>
-                  <th>Service Protocol</th>
-                  <th>Clinician / Provider</th>
-                  <th>Date & Time</th>
-                  <th>Status</th>
-                  <th>Payment</th>
-                  <th style={{ textAlign: 'right' }}>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {recentAppointments.map((apt) => (
-                  <tr key={apt.id}>
-                    <td>
-                      <div style={{ fontWeight: 600, color: '#0f2942' }}>{apt.clientName}</div>
-                      <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{apt.clientPhone}</div>
-                    </td>
-                    <td>
-                      <div style={{ fontWeight: 500 }}>{apt.serviceName}</div>
-                      <div style={{ fontSize: '0.75rem', color: '#1e5aa8' }}>{apt.duration || '60 Mins'}</div>
-                    </td>
-                    <td>
-                      <div style={{ fontSize: '0.85rem', color: '#334155' }}>{apt.providerName}</div>
-                      <div style={{ fontSize: '0.72rem', color: '#64748b' }}>{apt.room || 'Suite 1'}</div>
-                    </td>
-                    <td>
-                      <div style={{ fontWeight: 600, color: '#0f2942' }}>{apt.date}</div>
-                      <div style={{ fontSize: '0.78rem', color: '#64748b' }}>{apt.time}</div>
-                    </td>
-                    <td>
-                      <AdminBadge status={apt.status} />
-                    </td>
-                    <td>
-                      <AdminBadge status={apt.paymentStatus} />
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                        {/* View Details Drawer */}
-                        <button
-                          onClick={() => setSelectedAppointment(apt)}
-                          title="View Details"
+        <div className="admin-card" style={{ padding: '0', overflow: 'hidden' }}>
+          {paginatedActivities.length > 0 ? (
+            <>
+              <div style={{ display: 'flex', flexDirection: 'column' }}>
+                {paginatedActivities.map((act, idx) => {
+                  const isLast = idx === paginatedActivities.length - 1;
+                  return (
+                    <div
+                      key={act.id || idx}
+                      onClick={() => handleActivityClick(act)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleActivityClick(act);
+                        }
+                      }}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '14px 20px',
+                        borderBottom: isLast ? 'none' : '1px solid #f1f5f9',
+                        gap: '16px',
+                        cursor: 'pointer',
+                        transition: 'background 0.15s ease'
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = '#f8fafc')}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                      title={`View ${act.entity_type || 'activity'} details`}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1, minWidth: 0 }}>
+                        <div
                           style={{
-                            background: '#f8fafc',
-                            border: '1px solid #cbd5e1',
-                            padding: '6px 8px',
-                            borderRadius: '6px',
-                            cursor: 'pointer',
-                            color: '#1e5aa8',
+                            width: '36px',
+                            height: '36px',
+                            borderRadius: '10px',
                             display: 'flex',
-                            alignItems: 'center'
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            flexShrink: 0,
+                            background: getActivityIconBg(act.entity_type),
+                            color: getActivityIconColor(act.entity_type)
                           }}
                         >
-                          <Eye size={14} />
-                        </button>
+                          {getActivityIcon(act.entity_type)}
+                        </div>
 
-                        {/* Edit Status Modal */}
-                        <button
-                          onClick={() => setEditAppointment(apt)}
-                          title="Update Status"
-                          style={{
-                            background: '#f8fafc',
-                            border: '1px solid #cbd5e1',
-                            padding: '6px 8px',
-                            borderRadius: '6px',
-                            cursor: 'pointer',
-                            color: '#334155',
-                            display: 'flex',
-                            alignItems: 'center'
-                          }}
-                        >
-                          <Edit2 size={14} />
-                        </button>
-
-                        {/* Cancel Appointment Quick Action */}
-                        {apt.status !== 'Cancelled' && (
-                          <button
-                            onClick={() => {
-                              updateItem('appointments', apt.id, { status: 'Cancelled' });
-                            }}
-                            title="Cancel Appointment"
-                            style={{
-                              background: '#fef2f2',
-                              border: '1px solid #fecaca',
-                              padding: '6px 8px',
-                              borderRadius: '6px',
-                              cursor: 'pointer',
-                              color: '#b91c1c',
-                              display: 'flex',
-                              alignItems: 'center'
-                            }}
-                          >
-                            <XCircle size={14} />
-                          </button>
-                        )}
-
-                        {/* Delete with Confirmation */}
-                        <button
-                          onClick={() => setDeleteConfirmId(apt.id)}
-                          title="Delete Record"
-                          style={{
-                            background: '#fee2e2',
-                            border: '1px solid #fca5a5',
-                            padding: '6px 8px',
-                            borderRadius: '6px',
-                            cursor: 'pointer',
-                            color: '#b91c1c',
-                            display: 'flex',
-                            alignItems: 'center'
-                          }}
-                        >
-                          <Trash2 size={14} />
-                        </button>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: '0.86rem', fontWeight: 600, color: '#0f2942', lineHeight: 1.3, wordBreak: 'break-word' }}>
+                            {act.description}
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '3px' }}>
+                            <span
+                              style={{
+                                fontSize: '0.68rem',
+                                textTransform: 'uppercase',
+                                fontWeight: 700,
+                                letterSpacing: '0.04em',
+                                padding: '1px 6px',
+                                borderRadius: '4px',
+                                background: '#f1f5f9',
+                                color: '#475569'
+                              }}
+                            >
+                              {act.entity_type}
+                            </span>
+                          </div>
+                        </div>
                       </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.76rem', color: '#94a3b8', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                        <Clock size={13} />
+                        <span>{act.timeAgo || formatActivityTime(act.created_at)}</span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* ── Dynamic Pagination (Shown when > 20 activities) ── */}
+              {totalActivities > ACTIVITIES_PER_PAGE && (
+                <div className="admin-pagination">
+                  <div style={{ fontSize: '0.82rem', color: '#64748b' }}>
+                    Showing <strong style={{ color: '#0f2942', fontWeight: 600 }}>{(activityPage - 1) * ACTIVITIES_PER_PAGE + 1}</strong> to{' '}
+                    <strong style={{ color: '#0f2942', fontWeight: 600 }}>{Math.min(activityPage * ACTIVITIES_PER_PAGE, totalActivities)}</strong> of{' '}
+                    <strong style={{ color: '#0f2942', fontWeight: 600 }}>{totalActivities}</strong> activities
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <button
+                      className="admin-page-btn"
+                      disabled={activityPage === 1}
+                      onClick={() => setActivityPage(p => Math.max(1, p - 1))}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                      aria-label="Previous page"
+                    >
+                      <ChevronLeft size={14} />
+                      <span>Previous</span>
+                    </button>
+
+                    {Array.from({ length: totalActivityPages }).map((_, idx) => {
+                      const pageNum = idx + 1;
+                      if (
+                        pageNum === 1 ||
+                        pageNum === totalActivityPages ||
+                        (pageNum >= activityPage - 1 && pageNum <= activityPage + 1)
+                      ) {
+                        return (
+                          <button
+                            key={pageNum}
+                            className={`admin-page-btn ${activityPage === pageNum ? 'active' : ''}`}
+                            onClick={() => setActivityPage(pageNum)}
+                          >
+                            {pageNum}
+                          </button>
+                        );
+                      } else if (
+                        (pageNum === activityPage - 2 && pageNum > 1) ||
+                        (pageNum === activityPage + 2 && pageNum < totalActivityPages)
+                      ) {
+                        return (
+                          <span key={pageNum} style={{ color: '#94a3b8', padding: '0 4px', fontSize: '0.8rem' }}>
+                            ...
+                          </span>
+                        );
+                      }
+                      return null;
+                    })}
+
+                    <button
+                      className="admin-page-btn"
+                      disabled={activityPage === totalActivityPages}
+                      onClick={() => setActivityPage(p => Math.min(totalActivityPages, p + 1))}
+                      style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                      aria-label="Next page"
+                    >
+                      <span>Next</span>
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ padding: '40px 20px', textAlign: 'center', color: '#64748b' }}>
+              <Activity size={32} style={{ margin: '0 auto 8px', opacity: 0.5 }} />
+              <p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 600, color: '#0f2942' }}>No activities logged yet</p>
+              <p style={{ margin: '4px 0 0', fontSize: '0.8rem', color: '#64748b' }}>New practice updates and client actions will appear here in real time.</p>
+            </div>
+          )}
         </div>
       </div>
-
-      {/* ── Appointment Details Drawer ── */}
-      <AdminDrawer
-        isOpen={Boolean(selectedAppointment)}
-        onClose={() => setSelectedAppointment(null)}
-        title="Appointment Record"
-        subtitle={`ID: ${selectedAppointment?.id}`}
-        footer={
-          <AdminButton variant="secondary" onClick={() => setSelectedAppointment(null)}>
-            Close Details
-          </AdminButton>
-        }
-      >
-        {selectedAppointment && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-            {/* Status overview banner */}
-            <div
-              style={{
-                padding: '16px',
-                borderRadius: '12px',
-                background: '#f8fafc',
-                border: '1px solid #e2e8f0',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between'
-              }}
-            >
-              <div>
-                <span style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>
-                  Appointment Status
-                </span>
-                <div style={{ marginTop: '4px' }}>
-                  <AdminBadge status={selectedAppointment.status} />
-                </div>
-              </div>
-
-              <div>
-                <span style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>
-                  Payment Status
-                </span>
-                <div style={{ marginTop: '4px' }}>
-                  <AdminBadge status={selectedAppointment.paymentStatus} />
-                </div>
-              </div>
-            </div>
-
-            {/* Patient Info */}
-            <div style={{ background: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '18px' }}>
-              <h4 style={{ margin: '0 0 12px 0', fontSize: '0.9rem', color: '#0f2942', fontWeight: 700 }}>
-                Patient Information
-              </h4>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '0.85rem' }}>
-                <div>
-                  <span style={{ color: '#64748b', display: 'block', fontSize: '0.75rem' }}>Full Name</span>
-                  <span style={{ fontWeight: 600, color: '#0f2942' }}>{selectedAppointment.clientName}</span>
-                </div>
-                <div>
-                  <span style={{ color: '#64748b', display: 'block', fontSize: '0.75rem' }}>Phone</span>
-                  <span>{selectedAppointment.clientPhone}</span>
-                </div>
-                <div style={{ gridColumn: 'span 2' }}>
-                  <span style={{ color: '#64748b', display: 'block', fontSize: '0.75rem' }}>Email Address</span>
-                  <span>{selectedAppointment.clientEmail}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Treatment Protocol & Clinician */}
-            <div style={{ background: '#ffffff', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '18px' }}>
-              <h4 style={{ margin: '0 0 12px 0', fontSize: '0.9rem', color: '#0f2942', fontWeight: 700 }}>
-                Protocol & Schedule
-              </h4>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '0.85rem' }}>
-                <div>
-                  <span style={{ color: '#64748b', display: 'block', fontSize: '0.75rem' }}>Service Protocol</span>
-                  <span style={{ fontWeight: 600, color: '#1e5aa8' }}>{selectedAppointment.serviceName}</span>
-                </div>
-                <div>
-                  <span style={{ color: '#64748b', display: 'block', fontSize: '0.75rem' }}>Protocol Fee</span>
-                  <span style={{ fontWeight: 700, color: '#15803d' }}>${selectedAppointment.price}</span>
-                </div>
-                <div>
-                  <span style={{ color: '#64748b', display: 'block', fontSize: '0.75rem' }}>Assigned Clinician</span>
-                  <span style={{ fontWeight: 600 }}>{selectedAppointment.providerName}</span>
-                </div>
-                <div>
-                  <span style={{ color: '#64748b', display: 'block', fontSize: '0.75rem' }}>Duration</span>
-                  <span>{selectedAppointment.duration || '60 Mins'}</span>
-                </div>
-                <div>
-                  <span style={{ color: '#64748b', display: 'block', fontSize: '0.75rem' }}>Date</span>
-                  <span style={{ fontWeight: 600 }}>{selectedAppointment.date}</span>
-                </div>
-                <div>
-                  <span style={{ color: '#64748b', display: 'block', fontSize: '0.75rem' }}>Time & Suite</span>
-                  <span>{selectedAppointment.time} • {selectedAppointment.room || 'Suite 1'}</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Clinical Notes */}
-            <div style={{ background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', padding: '16px' }}>
-              <h4 style={{ margin: '0 0 8px 0', fontSize: '0.85rem', color: '#0f2942', fontWeight: 700 }}>
-                Clinical & Sensory Notes
-              </h4>
-              <p style={{ margin: 0, fontSize: '0.84rem', color: '#475569', lineHeight: 1.5 }}>
-                {selectedAppointment.notes || 'No special sensory or medical notes recorded.'}
-              </p>
-            </div>
-          </div>
-        )}
-      </AdminDrawer>
-
-      {/* ── Edit Appointment Status Modal ── */}
-      {editAppointment && (
-        <AdminModal
-          isOpen={Boolean(editAppointment)}
-          onClose={() => setEditAppointment(null)}
-          title="Update Appointment Status"
-          maxWidth="460px"
-        >
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            <p style={{ margin: 0, fontSize: '0.88rem', color: '#475569' }}>
-              Change the status for <strong>{editAppointment.clientName}</strong> ({editAppointment.serviceName}):
-            </p>
-
-            <div className="admin-form-group">
-              <label className="admin-form-label">Appointment Status</label>
-              <select
-                className="admin-form-select"
-                defaultValue={editAppointment.status}
-                id="edit-status-select"
-              >
-                <option value="Confirmed">Confirmed</option>
-                <option value="Completed">Completed</option>
-                <option value="Pending">Pending</option>
-                <option value="Cancelled">Cancelled</option>
-                <option value="No Show">No Show</option>
-              </select>
-            </div>
-
-            <div className="admin-form-group">
-              <label className="admin-form-label">Payment Status</label>
-              <select
-                className="admin-form-select"
-                defaultValue={editAppointment.paymentStatus}
-                id="edit-payment-select"
-              >
-                <option value="Paid">Paid</option>
-                <option value="Pending">Pending</option>
-                <option value="Refunded">Refunded</option>
-                <option value="Failed">Failed</option>
-              </select>
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
-              <AdminButton variant="secondary" onClick={() => setEditAppointment(null)}>
-                Cancel
-              </AdminButton>
-              <AdminButton
-                variant="primary"
-                onClick={() => {
-                  const status = document.getElementById('edit-status-select').value;
-                  const paymentStatus = document.getElementById('edit-payment-select').value;
-                  handleUpdateStatus(status, paymentStatus);
-                }}
-              >
-                Save Changes
-              </AdminButton>
-            </div>
-          </div>
-        </AdminModal>
-      )}
-
-      {/* ── Delete Confirmation Dialog ── */}
-      <AdminConfirmDialog
-        isOpen={Boolean(deleteConfirmId)}
-        onClose={() => setDeleteConfirmId(null)}
-        onConfirm={handleDeleteConfirm}
-        title="Remove Appointment Record"
-        message="Are you sure you want to delete this appointment from clinical records? This action cannot be reversed."
-      />
     </div>
   );
 };

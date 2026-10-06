@@ -1,5 +1,11 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
 import { supabaseDataService } from '../services/supabaseDataService';
+import {
+  getAppointmentDateObj,
+  isAppointmentUpcoming,
+  isAppointmentToday,
+  getUpcomingAppointments
+} from '../utils/appointmentUtils';
 
 const AdminDataContext = createContext(null);
 
@@ -15,6 +21,7 @@ export const AdminDataProvider = ({ children }) => {
   const [providers, setProviders] = useState(() => supabaseDataService.getCachedData('providers', []));
   const [inquiries, setInquiries] = useState(() => supabaseDataService.getCachedData('inquiries', []));
   const [notifications, setNotifications] = useState(() => supabaseDataService.getCachedData('notifications', []));
+  const [activityLogs, setActivityLogs] = useState(() => supabaseDataService.getCachedData('activity_logs', []));
   const [users, setUsers] = useState(() => supabaseDataService.getCachedData('users', []));
   const [websiteContent, setWebsiteContent] = useState(() => supabaseDataService.getCachedData('website_content', {}));
   const [settings, setSettings] = useState(() => supabaseDataService.getCachedData('settings', {}));
@@ -43,7 +50,7 @@ export const AdminDataProvider = ({ children }) => {
         const [
           apptData, clientData, serviceData, productData, categoryData,
           orderData, paymentData, providerData, inquiryData,
-          notifData, userData, contentData, settingsData
+          notifData, actData, userData, contentData, settingsData
         ] = await Promise.all([
           supabaseDataService.fetchAll('appointments'),
           supabaseDataService.fetchAll('clients'),
@@ -55,6 +62,7 @@ export const AdminDataProvider = ({ children }) => {
           supabaseDataService.fetchAll('providers'),
           supabaseDataService.fetchAll('inquiries'),
           supabaseDataService.fetchAll('notifications'),
+          supabaseDataService.fetchAll('activity_logs'),
           supabaseDataService.fetchAll('users'),
           supabaseDataService.fetchAll('website_content'),
           supabaseDataService.fetchAll('settings'),
@@ -71,6 +79,7 @@ export const AdminDataProvider = ({ children }) => {
           setProviders(providerData);
           setInquiries(inquiryData);
           setNotifications(notifData);
+          setActivityLogs(actData);
           setUsers(userData);
           setWebsiteContent(contentData);
           setSettings(settingsData);
@@ -107,10 +116,14 @@ export const AdminDataProvider = ({ children }) => {
       supabaseDataService.subscribe('providers', setProviders),
       supabaseDataService.subscribe('inquiries', setInquiries),
       supabaseDataService.subscribe('notifications', setNotifications),
+      supabaseDataService.subscribe('activity_logs', setActivityLogs),
       supabaseDataService.subscribe('users', setUsers),
       supabaseDataService.subscribe('website_content', setWebsiteContent),
       supabaseDataService.subscribe('settings', setSettings),
     ];
+    // Enable Realtime Supabase change listeners for live updates
+    supabaseDataService.enableRealtime(['appointments', 'clients', 'orders', 'payments', 'inquiries', 'notifications', 'activity_logs']);
+
     return () => unsubs.forEach(fn => fn());
   }, []);
 
@@ -144,7 +157,7 @@ export const AdminDataProvider = ({ children }) => {
   // Reset / re-fetch all data
   const resetToFactoryData = useCallback(async () => {
     setIsLoading(true);
-    const [apptData, clientData, serviceData, productData, orderData, paymentData, providerData, inquiryData, notifData, userData, contentData, settingsData] = await Promise.all([
+    const [apptData, clientData, serviceData, productData, orderData, paymentData, providerData, inquiryData, notifData, actData, userData, contentData, settingsData] = await Promise.all([
       supabaseDataService.fetchAll('appointments'),
       supabaseDataService.fetchAll('clients'),
       supabaseDataService.fetchAll('services'),
@@ -154,6 +167,7 @@ export const AdminDataProvider = ({ children }) => {
       supabaseDataService.fetchAll('providers'),
       supabaseDataService.fetchAll('inquiries'),
       supabaseDataService.fetchAll('notifications'),
+      supabaseDataService.fetchAll('activity_logs'),
       supabaseDataService.fetchAll('users'),
       supabaseDataService.fetchAll('website_content'),
       supabaseDataService.fetchAll('settings'),
@@ -167,18 +181,23 @@ export const AdminDataProvider = ({ children }) => {
     setProviders(providerData);
     setInquiries(inquiryData);
     setNotifications(notifData);
+    setActivityLogs(actData);
     setUsers(userData);
     setWebsiteContent(contentData);
     setSettings(settingsData);
     setIsLoading(false);
   }, []);
 
-  // Computed Business Analytics & Metrics
+  // Computed Business Analytics & Metrics (Unified with Appointments Module)
   const stats = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
+    const isToday = (dateVal) => {
+      if (!dateVal) return false;
+      return isAppointmentToday({ date: dateVal });
+    };
 
-    const todayAppointments = appointments.filter(a => a.date === today);
-    const upcomingAppointments = appointments.filter(a => a.date >= today && a.status !== 'Cancelled' && a.status !== 'Completed');
+    const todayAppointments = appointments.filter(isAppointmentToday);
+    const upcomingAppointments = getUpcomingAppointments(appointments);
+
     const completedAppointments = appointments.filter(a => a.status === 'Completed');
     const cancelledAppointments = appointments.filter(a => a.status === 'Cancelled');
     const pendingAppointments = appointments.filter(a => a.status === 'Pending');
@@ -192,27 +211,33 @@ export const AdminDataProvider = ({ children }) => {
       return diffDays <= 30;
     }).length;
 
-    const totalRevenue = payments
-      .filter(p => p.status === 'Paid')
-      .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+    const totalPaidPayments = payments
+      .filter(p => String(p.status || p.payment_status || '').toLowerCase() === 'paid')
+      .reduce((sum, p) => sum + Number(p.amount ?? p.total_amount ?? 0), 0);
+
+    const paidAppointmentsRevenue = appointments
+      .filter(a => String(a.paymentStatus || a.payment_status || '').toLowerCase() === 'paid')
+      .reduce((sum, a) => sum + Number(a.price || a.amount || 0), 0);
+
+    const totalRevenue = totalPaidPayments > 0 ? totalPaidPayments : paidAppointmentsRevenue;
 
     const pendingRevenue = payments
-      .filter(p => p.status === 'Pending')
-      .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+      .filter(p => String(p.status || p.payment_status || '').toLowerCase() === 'pending')
+      .reduce((sum, p) => sum + Number(p.amount ?? p.total_amount ?? 0), 0);
 
     const refundedRevenue = payments
-      .filter(p => p.status === 'Refunded')
-      .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+      .filter(p => String(p.status || p.payment_status || '').toLowerCase() === 'refunded')
+      .reduce((sum, p) => sum + Number(p.amount ?? p.total_amount ?? 0), 0);
 
     const todayRevenue = payments
-      .filter(p => p.status === 'Paid' && p.date && p.date.includes(today))
-      .reduce((sum, p) => sum + Number(p.amount || 0), 0);
+      .filter(p => String(p.status || p.payment_status || '').toLowerCase() === 'paid' && isToday(p.date || p.created_at))
+      .reduce((sum, p) => sum + Number(p.amount ?? p.total_amount ?? 0), 0);
 
-    const activeServicesCount = services.filter(s => s.status === 'Active').length;
+    const activeServicesCount = services.filter(s => s.status === 'Active' || s.practice_status === 'Active').length;
 
     const serviceBookingCounts = {};
     appointments.forEach(apt => {
-      const sName = apt.service_name || apt.serviceName || 'Standard Protocol';
+      const sName = apt.service_name || apt.serviceName || apt.protocol_title || 'Treatment Protocol';
       serviceBookingCounts[sName] = (serviceBookingCounts[sName] || 0) + 1;
     });
 
@@ -224,6 +249,7 @@ export const AdminDataProvider = ({ children }) => {
     const newInquiriesCount = inquiries.filter(i => i.status === 'New').length;
 
     return {
+      totalAppointmentsCount: appointments.length,
       todayAppointmentsCount: todayAppointments.length,
       upcomingAppointmentsCount: upcomingAppointments.length,
       completedAppointmentsCount: completedAppointments.length,
@@ -233,7 +259,7 @@ export const AdminDataProvider = ({ children }) => {
       activeClientsCount,
       newClientsCount,
       totalRevenue,
-      todayRevenue: todayRevenue || 567,
+      todayRevenue,
       monthlyRevenue: totalRevenue,
       pendingRevenue,
       refundedRevenue,
@@ -242,8 +268,10 @@ export const AdminDataProvider = ({ children }) => {
       topServices,
       unreadNotificationsCount,
       newInquiriesCount,
+      totalOrdersCount: orders.length,
+      pendingOrdersCount: orders.filter(o => String(o.orderStatus || o.status || '').toLowerCase() === 'pending').length,
     };
-  }, [appointments, clients, payments, services, notifications, inquiries]);
+  }, [appointments, clients, payments, services, orders, notifications, inquiries]);
 
   return (
     <AdminDataContext.Provider
@@ -258,6 +286,7 @@ export const AdminDataProvider = ({ children }) => {
         providers,
         inquiries,
         notifications,
+        activityLogs,
         users,
         websiteContent,
         settings,

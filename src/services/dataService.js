@@ -349,79 +349,11 @@ const initialPayments = [
   }
 ];
 
-// Initial Inquiries / Leads from public website
-const initialInquiries = [
-  {
-    id: "inq-1",
-    name: "Genevieve St. Claire",
-    email: "g.stclaire@vogueintl.com",
-    phone: "(214) 492-8812",
-    subject: "Inquiry regarding Inclusive Sensory Suite for High Sensory Sensitivity",
-    message: "Hello BeautyOasis team. I read about your sensory-inclusive suites in Allen. I experience intense migraines from harsh fluorescent clinic lighting and clinical scents. Can you provide more details about how the lighting and sound are controlled?",
-    date: "2026-09-25 09:12 AM",
-    status: "New"
-  },
-  {
-    id: "inq-2",
-    name: "Robert MacIntyre",
-    email: "robert.m@dallasexec.com",
-    phone: "(972) 412-9901",
-    subject: "Men's Laser Protocol & Downtime Questions",
-    message: "I am interested in scheduling a consultation for persistent facial erythema and sun damage before an upcoming corporate summit. What is the typical recovery timeline after Laser Genesis?",
-    date: "2026-09-24 02:45 PM",
-    status: "Read"
-  },
-  {
-    id: "inq-3",
-    name: "Danielle Vance",
-    email: "d.vance92@icloud.com",
-    phone: "(214) 778-1022",
-    subject: "Polynucleotide vs Hyaluronic Acid Fillers",
-    message: "Could Dr. Vance advise if Polynucleotide biostimulation is suitable for subtle under-eye volume loss without creating water retention or puffiness?",
-    date: "2026-09-23 11:30 AM",
-    status: "Replied"
-  }
-];
+// Initial Inquiries / Leads from public website (Dynamic via Supabase)
+const initialInquiries = [];
 
-// Initial Notifications
-const initialNotifications = [
-  {
-    id: "notif-1",
-    title: "New Appointment Booked",
-    message: "Dr. Sarah Jenkins requested Hydrafacial Deluxe Pro for today at 11:30 AM.",
-    type: "appointment",
-    timestamp: "15 mins ago",
-    read: false,
-    link: "/appointments"
-  },
-  {
-    id: "notif-2",
-    title: "New Online Order Received",
-    message: "Camille Dupont placed order ORD-9402 ($207.00).",
-    type: "order",
-    timestamp: "1 hour ago",
-    read: false,
-    link: "/orders"
-  },
-  {
-    id: "notif-3",
-    title: "Payment Received",
-    message: "Payment of $360.00 confirmed for Lady Charlotte Montagu.",
-    type: "payment",
-    timestamp: "2 hours ago",
-    read: true,
-    link: "/payments"
-  },
-  {
-    id: "notif-4",
-    title: "New Client Inquiry",
-    message: "Genevieve St. Claire inquired regarding Inclusive Sensory Suite.",
-    type: "inquiry",
-    timestamp: "3 hours ago",
-    read: false,
-    link: "/inquiries"
-  }
-];
+// Initial Notifications (strictly dynamic from Supabase)
+const initialNotifications = [];
 
 // Initial Admin Users
 const initialUsers = [

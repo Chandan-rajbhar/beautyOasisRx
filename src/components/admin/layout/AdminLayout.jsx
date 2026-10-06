@@ -5,6 +5,7 @@ import { AdminHeader } from './AdminHeader';
 import { useAdminAuth } from '../../../context/AdminAuthContext';
 import { PageLoader } from '../ui/AdminLoaders';
 import { AdminLogoutDialog } from '../ui/AdminLogoutDialog';
+import { ErrorBoundary } from '../../common/ErrorBoundary';
 import '../../../styles/admin.css';
 
 // Standalone component for unauthorized state (avoids hook-in-render issues)
@@ -147,7 +148,9 @@ export const AdminLayout = () => {
         />
 
         <main className="admin-body">
-          <Outlet />
+          <ErrorBoundary>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
 

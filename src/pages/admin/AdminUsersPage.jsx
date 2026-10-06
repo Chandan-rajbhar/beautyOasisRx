@@ -34,6 +34,24 @@ import { AdminDrawer } from '../../components/admin/ui/AdminDrawer';
 import { AdminConfirmDialog } from '../../components/admin/ui/AdminConfirmDialog';
 import toast from 'react-hot-toast';
 
+const isInlineImage = (value) => typeof value === 'string' && /^data:image\//i.test(value);
+
+const getAuthPhotoMetadata = (photoUrl) => {
+  if (photoUrl === undefined) return {};
+  if (!photoUrl || isInlineImage(photoUrl)) return { profile_photo_url: null, avatar: null };
+  return { profile_photo_url: photoUrl, avatar: photoUrl };
+};
+
+const cacheUserPhoto = (key, photoUrl) => {
+  try {
+    if (isInlineImage(photoUrl)) {
+      localStorage.removeItem(key);
+      return;
+    }
+    localStorage.setItem(key, photoUrl);
+  } catch (_) { }
+};
+
 // ─── Role definitions ────────────────────────────────────────────────────────
 const ROLES = [
   { value: 'super_admin', label: 'Super Admin', },
@@ -722,7 +740,7 @@ export const AdminUsersPage = () => {
         const rawCached = localStorage.getItem('cached_dynamic_patients');
         const parsedCached = rawCached ? JSON.parse(rawCached) : [];
         const updatedList = [{ ...payload, id: `patient-${Date.now()}` }, ...parsedCached.filter(p => (p.email || '').toLowerCase() !== email)];
-        localStorage.setItem('cached_dynamic_patients', JSON.stringify(updatedList));
+        localStorage.setItem('cached_dynamic_patients', JSON.stringify(supabaseDataService.sanitizeCacheData(updatedList)));
       } catch (_) {}
 
       try {
@@ -787,7 +805,7 @@ export const AdminUsersPage = () => {
         await supabase.auth.updateUser({
           data: {
             name,
-            ...(photoUrl !== undefined ? { profile_photo_url: photoUrl, avatar: photoUrl } : {}),
+            ...getAuthPhotoMetadata(photoUrl),
           },
         });
       } catch (authErr) {
@@ -796,8 +814,8 @@ export const AdminUsersPage = () => {
 
       // Cache photo in localStorage for guaranteed display
       if (photoUrl) {
-        try { localStorage.setItem(`user_photo_${email}`, photoUrl); } catch (_) { }
-        try { localStorage.setItem(`user_photo_${editUser.id}`, photoUrl); } catch (_) { }
+        cacheUserPhoto(`user_photo_${email}`, photoUrl);
+        cacheUserPhoto(`user_photo_${editUser.id}`, photoUrl);
       } else if (photoUrl === null) {
         try { localStorage.removeItem(`user_photo_${email}`); } catch (_) { }
         try { localStorage.removeItem(`user_photo_${editUser.id}`); } catch (_) { }
@@ -830,7 +848,7 @@ export const AdminUsersPage = () => {
         user_metadata: {
           name,
           role: 'super_admin',
-          ...(photoUrl ? { profile_photo_url: photoUrl, avatar: photoUrl } : {}),
+          ...getAuthPhotoMetadata(photoUrl),
         },
       });
 
@@ -857,7 +875,7 @@ export const AdminUsersPage = () => {
             data: {
               name,
               role: 'super_admin',
-              ...(photoUrl ? { profile_photo_url: photoUrl, avatar: photoUrl } : {}),
+              ...getAuthPhotoMetadata(photoUrl),
             },
           },
         });
@@ -927,8 +945,8 @@ export const AdminUsersPage = () => {
 
       // Cache photo in localStorage
       if (photoUrl) {
-        try { localStorage.setItem(`user_photo_${email}`, photoUrl); } catch (_) { }
-        try { localStorage.setItem(`user_photo_${authUserId}`, photoUrl); } catch (_) { }
+        cacheUserPhoto(`user_photo_${email}`, photoUrl);
+        cacheUserPhoto(`user_photo_${authUserId}`, photoUrl);
       }
 
       toast.success(
