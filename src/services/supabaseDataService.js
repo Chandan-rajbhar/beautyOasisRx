@@ -14,6 +14,7 @@ import { supabaseAdmin } from '../lib/supabaseAdmin';
 import { normalizeNotification, DEFAULT_NOTIFICATIONS, deduplicateNotifications, isStaticNotification } from './notificationService';
 import { activityLogService } from './activityLogService';
 import { getUpcomingAppointments, isAppointmentUpcoming } from '../utils/appointmentUtils';
+import { normalizeCoupon } from './couponService';
 
 // Map collection names to Supabase table names
 const TABLE_MAP = {
@@ -34,6 +35,7 @@ const TABLE_MAP = {
   website_content: 'website_content',
   settings: 'settings',
   order_statuses: 'order_statuses',
+  coupons: 'coupons',
 };
 
 const APPOINTMENTS_DB_COLUMNS = new Set([
@@ -742,6 +744,10 @@ async function fetchAll(collection, options = {}) {
         if (collection === 'notifications' && Array.isArray(data)) {
           data = data.map(normalizeNotification);
         }
+
+        if (collection === 'coupons' && Array.isArray(data)) {
+          data = data.map(normalizeCoupon);
+        }
       }
 
       if (error) {
@@ -838,7 +844,9 @@ async function createItem(collection, item) {
       ? normalizePayment(insertResult, cache.clients || [])
       : collection === 'inquiries'
         ? normalizeInquiry(insertResult)
-        : insertResult;
+        : collection === 'coupons'
+          ? normalizeCoupon(insertResult)
+          : insertResult;
   const currentList = Array.isArray(cache[collection]) ? cache[collection] : [];
   const updatedList = [normalized, ...currentList.filter((x) => x.id !== normalized.id)];
   notifySubscribers(collection, updatedList);
@@ -930,7 +938,9 @@ async function updateItem(collection, id, updates) {
       ? normalizePayment(updateResult, cache.clients || [])
       : collection === 'inquiries'
         ? normalizeInquiry(updateResult)
-        : updateResult;
+        : collection === 'coupons'
+          ? normalizeCoupon(updateResult)
+          : updateResult;
   const currentList = Array.isArray(cache[collection]) ? cache[collection] : [];
   const updatedList = currentList.map((item) => (String(item.id) === String(id) ? { ...item, ...normalized } : item));
   notifySubscribers(collection, updatedList);

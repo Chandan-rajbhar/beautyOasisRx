@@ -167,6 +167,75 @@ export type Database = {
         }
         Relationships: []
       }
+      coupons: {
+        Row: {
+          code: string
+          coupon_code: string | null
+          created_at: string
+          description: string | null
+          discount_amount: number | null
+          discount_percent: number | null
+          discount_type: string
+          discount_value: number
+          end_date: string | null
+          expiry_date: string | null
+          id: string
+          max_uses: number | null
+          min_order_amount: number | null
+          min_spend: number | null
+          start_date: string | null
+          status: string
+          times_used: number | null
+          updated_at: string
+          usage_count: number | null
+          usage_limit: number | null
+        }
+        Insert: {
+          code: string
+          coupon_code?: string | null
+          created_at?: string
+          description?: string | null
+          discount_amount?: number | null
+          discount_percent?: number | null
+          discount_type?: string
+          discount_value: number
+          end_date?: string | null
+          expiry_date?: string | null
+          id?: string
+          max_uses?: number | null
+          min_order_amount?: number | null
+          min_spend?: number | null
+          start_date?: string | null
+          status?: string
+          times_used?: number | null
+          updated_at?: string
+          usage_count?: number | null
+          usage_limit?: number | null
+        }
+        Update: {
+          code?: string
+          coupon_code?: string | null
+          created_at?: string
+          description?: string | null
+          discount_amount?: number | null
+          discount_percent?: number | null
+          discount_type?: string
+          discount_value?: number
+          end_date?: string | null
+          expiry_date?: string | null
+          id?: string
+          max_uses?: number | null
+          min_order_amount?: number | null
+          min_spend?: number | null
+          start_date?: string | null
+          status?: string
+          times_used?: number | null
+          updated_at?: string
+          usage_count?: number | null
+          usage_limit?: number | null
+        }
+        Relationships: []
+      }
       clinicians: {
         Row: {
           availability_schedule: Json | null
@@ -617,6 +686,8 @@ export type Database = {
           created_at: string
           duration: string
           id: string
+          image_url: string | null
+          images: Json | null
           price: number
           protocol_title: string
           status: string
@@ -632,6 +703,8 @@ export type Database = {
           created_at?: string
           duration?: string
           id?: string
+          image_url?: string | null
+          images?: Json | null
           price?: number
           protocol_title: string
           status?: string
@@ -647,6 +720,8 @@ export type Database = {
           created_at?: string
           duration?: string
           id?: string
+          image_url?: string | null
+          images?: Json | null
           price?: number
           protocol_title?: string
           status?: string
@@ -658,7 +733,7 @@ export type Database = {
             foreignKeyName: "treatment_protocols_category_id_fkey"
             columns: ["category_id"]
             isOneToOne: false
-            referencedRelation: "categories"
+            referencedRelation: "treatment_categories"
             referencedColumns: ["id"]
           },
         ]

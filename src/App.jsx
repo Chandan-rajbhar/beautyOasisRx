@@ -19,6 +19,7 @@ const AppointmentsPage = lazy(() => import('./pages/admin/AppointmentsPage').the
 const ClientsPage = lazy(() => import('./pages/admin/ClientsPage').then(m => ({ default: m.ClientsPage })));
 const ServicesPage = lazy(() => import('./pages/admin/ServicesPage').then(m => ({ default: m.ServicesPage })));
 const ProductsPage = lazy(() => import('./pages/admin/ProductsPage').then(m => ({ default: m.ProductsPage })));
+const CouponsPage = lazy(() => import('./pages/admin/CouponsPage').then(m => ({ default: m.CouponsPage || m.default })));
 const OrdersPage = lazy(() => import('./pages/admin/OrdersPage').then(m => ({ default: m.OrdersPage })));
 const PaymentsPage = lazy(() => import('./pages/admin/PaymentsPage').then(m => ({ default: m.PaymentsPage })));
 const ProvidersPage = lazy(() => import('./pages/admin/ProvidersPage').then(m => ({ default: m.ProvidersPage })));
@@ -122,6 +123,7 @@ export function App() {
                   <Route path="/clients/:patientId" element={<PatientProfilePage />} />
                   <Route path="/services" element={<ServicesPage />} />
                   <Route path="/products" element={<ProductsPage />} />
+                  <Route path="/coupons" element={<CouponsPage />} />
                   <Route path="/orders" element={<OrdersPage />} />
                   <Route path="/orders/:orderId" element={<OrderDetailsPage />} />
                   <Route path="/payments" element={<PaymentsPage />} />
@@ -143,6 +145,7 @@ export function App() {
                   <Route path="/admin/clients/:patientId" element={<PatientProfilePage />} />
                   <Route path="/admin/services" element={<ServicesPage />} />
                   <Route path="/admin/products" element={<ProductsPage />} />
+                  <Route path="/admin/coupons" element={<CouponsPage />} />
                   <Route path="/admin/orders" element={<OrdersPage />} />
                   <Route path="/admin/orders/:orderId" element={<OrderDetailsPage />} />
                   <Route path="/admin/payments" element={<PaymentsPage />} />

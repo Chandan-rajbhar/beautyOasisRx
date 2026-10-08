@@ -17,6 +17,7 @@ import {
   Settings,
   LogOut,
   X,
+  Tag,
 } from 'lucide-react';
 
 import { useAdminAuth } from '../../../context/AdminAuthContext';
@@ -81,6 +82,7 @@ export const AdminSidebar = ({
       label: "Apothecary & Finance",
       items: [
         { label: "Products Catalog", path: "/products", icon: <ShoppingBag size={18} />, permission: "products" },
+        { label: "Coupons", path: "/coupons", icon: <Tag size={18} />, permission: "products" },
         { label: "Orders", path: "/orders", icon: <ShoppingCart size={18} />, permission: "orders" },
         { label: "Payments", path: "/payments", icon: <CreditCard size={18} />, permission: "payments" }
       ]

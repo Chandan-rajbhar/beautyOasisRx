@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Sparkles,
@@ -17,7 +17,18 @@ import {
   AlertCircle,
   RefreshCw,
   X,
-  Check
+  Check,
+  Upload,
+  Link,
+  Image as ImageIcon,
+  Camera,
+  Loader2,
+  GripVertical,
+  ArrowUp,
+  ArrowDown,
+  Maximize2,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { supabase } from '../../lib/supabaseClient';
@@ -72,7 +83,9 @@ const DEFAULT_FORM = {
   duration: '60 Mins',
   status: 'Active',
   tagline: '',
-  clinical_description: ''
+  clinical_description: '',
+  image_url: '',
+  images: []
 };
 
 
@@ -125,6 +138,30 @@ export const ServicesPage = () => {
   const [formData, setFormData] = useState({ ...DEFAULT_FORM });
   const [formErrors, setFormErrors] = useState({});
 
+  // Multiple Treatment Images State
+  // Array of: { id, url, file, sequence, name, isNew }
+  const [treatmentImages, setTreatmentImages] = useState([]);
+  const [imageUrlInput, setImageUrlInput] = useState('');
+  const [imageError, setImageError] = useState(null);
+  const [uploadingImage, setUploadingImage] = useState(false);
+  const fileInputRef = useRef(null);
+  const replaceFileInputRef = useRef(null);
+  const [replacingImageId, setReplacingImageId] = useState(null);
+
+  // Drag and drop reordering sequence state
+  const [draggedImageIndex, setDraggedImageIndex] = useState(null);
+
+  // Full-resolution image lightbox view modal
+  const [viewingImage, setViewingImage] = useState(null);
+
+  // Edit image details modal (rename label or modify URL)
+  const [editingImageItem, setEditingImageItem] = useState(null);
+  const [editingImageName, setEditingImageName] = useState('');
+  const [editingImageUrl, setEditingImageUrl] = useState('');
+
+  // Overview drawer active hero preview index
+  const [overviewActiveImageIndex, setOverviewActiveImageIndex] = useState(0);
+
   // Close actions dropdown on click outside, scroll, resize or Esc key
   useEffect(() => {
     const handleClickOutside = (e) => {
@@ -162,18 +199,20 @@ export const ServicesPage = () => {
   }, [actionMenuTreatmentId]);
 
   // ─────────────────────────────────────────────────────────────
-  // 1. FETCH CATEGORIES (SUPABASE)
+  // 1. FETCH TREATMENT CATEGORIES (treatment_categories table)
+  //    NOTE: This is intentionally separate from the 'categories'
+  //    table which is used exclusively by the Products module.
   // ─────────────────────────────────────────────────────────────
   const fetchCategories = useCallback(async () => {
     try {
       let { data, error: catErr } = await supabase
-        .from('categories')
+        .from('treatment_categories')
         .select('*')
         .order('name', { ascending: true });
 
       if (catErr) {
         const adminRes = await supabaseAdmin
-          .from('categories')
+          .from('treatment_categories')
           .select('*')
           .order('name', { ascending: true });
         if (!adminRes.error && adminRes.data) {
@@ -182,11 +221,11 @@ export const ServicesPage = () => {
         }
       }
 
-      // If categories table is empty, auto-seed default clinical categories
+      // If treatment_categories table is empty, auto-seed default clinical categories
       if (!catErr && (!data || data.length === 0)) {
         const seedPayload = DEFAULT_CLINICAL_CATEGORIES.map(name => ({ name }));
         try {
-          const { data: seeded } = await supabase.from('categories').insert(seedPayload).select();
+          const { data: seeded } = await supabase.from('treatment_categories').insert(seedPayload).select();
           if (seeded && seeded.length > 0) {
             data = seeded;
           }
@@ -195,14 +234,14 @@ export const ServicesPage = () => {
 
       if (data && data.length > 0) {
         setCategories(data);
-        try { localStorage.setItem('bo_categories_cache', JSON.stringify(data)); } catch (_) { }
+        try { localStorage.setItem('bo_treatment_categories_cache', JSON.stringify(data)); } catch (_) { }
       } else {
         // Fallback to local default objects
         const fallbackCats = DEFAULT_CLINICAL_CATEGORIES.map((name, i) => ({ id: `cat-${i}`, name }));
         setCategories(fallbackCats);
       }
     } catch (err) {
-      console.error('Error fetching categories from Supabase:', err);
+      console.error('Error fetching treatment categories from Supabase:', err);
       const fallbackCats = DEFAULT_CLINICAL_CATEGORIES.map((name, i) => ({ id: `cat-${i}`, name }));
       setCategories(fallbackCats);
     }
@@ -315,19 +354,64 @@ export const ServicesPage = () => {
           } catch (_) { }
         }
       } else if (data) {
-        // Normalize rows so both protocol_title and title work cleanly
-        treatmentsResult = data.map(item => ({
-          ...item,
-          protocol_title: item.protocol_title || item.title || 'Untitled Protocol',
-          price: Number(item.price || item.numericPrice || 0),
-          duration: item.duration || '60 Mins',
-          status: item.status || 'Active',
-          appointment_date: item.appointment_date || (item.created_at ? item.created_at.split('T')[0] : '2026-09-30'),
-          appointment_time: item.appointment_time || '10:30 AM',
-          category: item.category || 'Skin Rejuvenation',
-          tagline: item.tagline || '',
-          clinical_description: item.clinical_description || item.description || ''
-        }));
+        // Normalize rows so both protocol_title, images, and sequence order work cleanly
+        treatmentsResult = data.map(item => {
+          let normalizedImages = [];
+          if (Array.isArray(item.images)) {
+            normalizedImages = item.images.map((img, idx) => {
+              if (typeof img === 'string') {
+                return { id: `img_${idx}`, url: img, sequence: idx + 1, name: `Image #${idx + 1}` };
+              }
+              return {
+                id: img.id || `img_${idx}`,
+                url: img.url || '',
+                sequence: typeof img.sequence === 'number' ? img.sequence : idx + 1,
+                name: img.name || `Image #${idx + 1}`
+              };
+            }).filter(img => Boolean(img.url)).sort((a, b) => a.sequence - b.sequence);
+          } else if (typeof item.images === 'string') {
+            try {
+              const parsed = JSON.parse(item.images);
+              if (Array.isArray(parsed)) {
+                normalizedImages = parsed.map((img, idx) => {
+                  if (typeof img === 'string') {
+                    return { id: `img_${idx}`, url: img, sequence: idx + 1, name: `Image #${idx + 1}` };
+                  }
+                  return {
+                    id: img.id || `img_${idx}`,
+                    url: img.url || '',
+                    sequence: typeof img.sequence === 'number' ? img.sequence : idx + 1,
+                    name: img.name || `Image #${idx + 1}`
+                  };
+                }).filter(img => Boolean(img.url)).sort((a, b) => a.sequence - b.sequence);
+              }
+            } catch (_) {}
+          }
+
+          if (normalizedImages.length === 0 && (item.image_url || item.image)) {
+            normalizedImages = [{
+              id: 'img_primary',
+              url: item.image_url || item.image,
+              sequence: 1,
+              name: 'Primary Image'
+            }];
+          }
+
+          return {
+            ...item,
+            protocol_title: item.protocol_title || item.title || 'Untitled Protocol',
+            price: Number(item.price || item.numericPrice || 0),
+            duration: item.duration || '60 Mins',
+            status: item.status || 'Active',
+            appointment_date: item.appointment_date || (item.created_at ? item.created_at.split('T')[0] : '2026-09-30'),
+            appointment_time: item.appointment_time || '10:30 AM',
+            category: item.category || 'Skin Rejuvenation',
+            tagline: item.tagline || '',
+            clinical_description: item.clinical_description || item.description || '',
+            images: normalizedImages,
+            image_url: normalizedImages[0]?.url || item.image_url || item.image || ''
+          };
+        });
       }
 
       setTreatments(treatmentsResult);
@@ -398,8 +482,296 @@ export const ServicesPage = () => {
     }));
   }, [durations]);
 
+  // Dynamic Overview Drawer Images (ordered by sequence)
+  const overviewImages = useMemo(() => {
+    if (!selectedTreatment) return [];
+    if (Array.isArray(selectedTreatment.images) && selectedTreatment.images.length > 0) {
+      return [...selectedTreatment.images]
+        .filter(item => Boolean(item && item.url))
+        .sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
+    }
+    if (selectedTreatment.image_url || selectedTreatment.image) {
+      return [{
+        id: 'primary',
+        url: selectedTreatment.image_url || selectedTreatment.image,
+        sequence: 1,
+        name: selectedTreatment.protocol_title || 'Primary Image'
+      }];
+    }
+    return [];
+  }, [selectedTreatment]);
+
   // ─────────────────────────────────────────────────────────────
-  // 4. DRAWER OPEN & CLOSE HANDLERS
+  // 4. MULTI-IMAGE GALLERY, CRUD & SEQUENCE MANAGEMENT HANDLERS
+  // ─────────────────────────────────────────────────────────────
+  // Sync overview active index on treatment change
+  useEffect(() => {
+    setOverviewActiveImageIndex(0);
+  }, [selectedTreatment]);
+
+  // Add multiple files from device
+  const handleAddFiles = (files) => {
+    if (!files || files.length === 0) return;
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg', 'image/gif', 'image/svg+xml'];
+    const maxSize = 10 * 1024 * 1024; // 10MB
+
+    const newItems = [];
+    let hasTypeError = false;
+    let hasSizeError = false;
+
+    Array.from(files).forEach((file, fileIdx) => {
+      if (!validTypes.includes(file.type)) {
+        hasTypeError = true;
+        return;
+      }
+      if (file.size > maxSize) {
+        hasSizeError = true;
+        return;
+      }
+
+      const previewUrl = URL.createObjectURL(file);
+      const seq = treatmentImages.length + newItems.length + 1;
+      newItems.push({
+        id: `img_${Date.now()}_${fileIdx}_${Math.random().toString(36).substring(2, 7)}`,
+        url: previewUrl,
+        file: file,
+        sequence: seq,
+        name: file.name,
+        isNew: true
+      });
+    });
+
+    if (hasTypeError) {
+      toast.error('Some files were skipped: JPG, PNG, WEBP, GIF, SVG only.');
+    }
+    if (hasSizeError) {
+      toast.error('Some files were skipped: 10MB size limit exceeded.');
+    }
+
+    if (newItems.length > 0) {
+      setTreatmentImages(prev => [...prev, ...newItems]);
+      setImageError(null);
+      toast.success(`${newItems.length} image${newItems.length > 1 ? 's' : ''} added to gallery.`);
+    }
+
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  // Add image from public URL
+  const handleAddUrlImage = () => {
+    const trimmed = imageUrlInput.trim();
+    if (!trimmed) {
+      setImageError('Please enter a valid image URL.');
+      return;
+    }
+    try {
+      new URL(trimmed);
+    } catch (_) {
+      setImageError('Please enter a valid URL (starting with http:// or https://).');
+      return;
+    }
+
+    const seq = treatmentImages.length + 1;
+    let derivedName = `Image #${seq}`;
+    try {
+      const pathname = new URL(trimmed).pathname;
+      const last = pathname.split('/').filter(Boolean).pop();
+      if (last && last.includes('.')) {
+        derivedName = decodeURIComponent(last);
+      }
+    } catch (_) {}
+
+    const newItem = {
+      id: `img_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      url: trimmed,
+      sequence: seq,
+      name: derivedName
+    };
+
+    setTreatmentImages(prev => [...prev, newItem]);
+    setImageUrlInput('');
+    setImageError(null);
+    toast.success('Image URL added.');
+  };
+
+  // Delete individual image and re-sequence
+  const handleDeleteImage = (id) => {
+    setTreatmentImages(prev => {
+      const filtered = prev.filter(img => img.id !== id);
+      return filtered.map((img, idx) => ({
+        ...img,
+        sequence: idx + 1
+      }));
+    });
+    toast('Image removed from gallery.', { icon: '🗑️' });
+  };
+
+  // Move up / down sequence buttons
+  const handleMoveImage = (index, direction) => {
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex < 0 || targetIndex >= treatmentImages.length) return;
+
+    setTreatmentImages(prev => {
+      const updated = [...prev];
+      const temp = updated[index];
+      updated[index] = updated[targetIndex];
+      updated[targetIndex] = temp;
+      return updated.map((item, idx) => ({
+        ...item,
+        sequence: idx + 1
+      }));
+    });
+  };
+
+  // Drag-and-drop sequence management
+  const handleDragStart = (e, index) => {
+    setDraggedImageIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e, index) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = (e, targetIndex) => {
+    e.preventDefault();
+    if (draggedImageIndex === null || draggedImageIndex === targetIndex) {
+      setDraggedImageIndex(null);
+      return;
+    }
+
+    setTreatmentImages(prev => {
+      const updated = [...prev];
+      const [movedItem] = updated.splice(draggedImageIndex, 1);
+      updated.splice(targetIndex, 0, movedItem);
+      return updated.map((item, idx) => ({
+        ...item,
+        sequence: idx + 1
+      }));
+    });
+    setDraggedImageIndex(null);
+    toast.success('Image sequence reordered.');
+  };
+
+  // Replace individual image file from device
+  const handleInitiateReplace = (item) => {
+    setReplacingImageId(item.id);
+    if (replaceFileInputRef.current) {
+      replaceFileInputRef.current.click();
+    }
+  };
+
+  const handleReplaceFileChange = (e) => {
+    const file = e.target?.files?.[0];
+    if (!file || !replacingImageId) return;
+
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg', 'image/gif', 'image/svg+xml'];
+    if (!validTypes.includes(file.type)) {
+      toast.error('Invalid file type. Please upload a JPG, PNG, WEBP, or GIF.');
+      return;
+    }
+
+    const previewUrl = URL.createObjectURL(file);
+    setTreatmentImages(prev => prev.map(item => {
+      if (item.id === replacingImageId) {
+        return {
+          ...item,
+          url: previewUrl,
+          file: file,
+          name: file.name
+        };
+      }
+      return item;
+    }));
+
+    toast.success('Image replaced.');
+    setReplacingImageId(null);
+    if (replaceFileInputRef.current) replaceFileInputRef.current.value = '';
+  };
+
+  // Edit image details (label or URL)
+  const handleOpenEditImageModal = (item) => {
+    setEditingImageItem(item);
+    setEditingImageName(item.name || `Image #${item.sequence}`);
+    setEditingImageUrl(item.url || '');
+  };
+
+  const handleSaveEditedImage = () => {
+    if (!editingImageItem) return;
+    setTreatmentImages(prev => prev.map(item => {
+      if (item.id === editingImageItem.id) {
+        return {
+          ...item,
+          name: editingImageName.trim() || item.name,
+          url: editingImageUrl.trim() || item.url
+        };
+      }
+      return item;
+    }));
+    toast.success('Image details updated.');
+    setEditingImageItem(null);
+  };
+
+  // Upload single image file to Supabase Storage
+  const uploadTreatmentImage = async (file) => {
+    if (!file) return null;
+    const fileExt = file.name ? file.name.split('.').pop() : 'jpg';
+    const fileName = `treatment_${Date.now()}_${Math.random().toString(36).substring(2, 9)}.${fileExt}`;
+    const filePath = `treatments/${fileName}`;
+
+    let targetBucket = null;
+    try {
+      const { data: buckets } = await supabase.storage.listBuckets();
+      const bucketNames = Array.isArray(buckets) ? buckets.map(b => b.name || b.id) : [];
+      if (bucketNames.includes('treatments')) targetBucket = 'treatments';
+      else if (bucketNames.includes('treatment-images')) targetBucket = 'treatment-images';
+      else if (bucketNames.includes('services')) targetBucket = 'services';
+      else if (bucketNames.includes('products')) targetBucket = 'products';
+      else if (bucketNames.includes('avatars')) targetBucket = 'avatars';
+      else if (bucketNames.length > 0) targetBucket = bucketNames[0];
+    } catch (_) { }
+
+    const candidateBuckets = targetBucket
+      ? [targetBucket, 'treatments', 'treatment-images', 'services', 'products', 'avatars']
+      : ['treatments', 'treatment-images', 'services', 'products', 'avatars'];
+    const uniqueBuckets = [...new Set(candidateBuckets)];
+
+    for (const b of uniqueBuckets) {
+      try {
+        const { data: upData, error: upErr } = await supabase.storage
+          .from(b)
+          .upload(filePath, file, { cacheControl: '3600', upsert: true });
+
+        if (!upErr && upData) {
+          const { data: pubData } = supabase.storage.from(b).getPublicUrl(filePath);
+          if (pubData?.publicUrl) return pubData.publicUrl;
+        }
+      } catch (_) { }
+
+      try {
+        const { data: upData, error: upErr } = await supabaseAdmin.storage
+          .from(b)
+          .upload(filePath, file, { cacheControl: '3600', upsert: true });
+
+        if (!upErr && upData) {
+          const { data: pubData } = supabaseAdmin.storage.from(b).getPublicUrl(filePath);
+          if (pubData?.publicUrl) return pubData.publicUrl;
+        }
+      } catch (_) { }
+    }
+
+    // High-performance fallback: Data URL
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => resolve(reader.result);
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // ─────────────────────────────────────────────────────────────
+  // 5. DRAWER OPEN & CLOSE HANDLERS
   // ─────────────────────────────────────────────────────────────
   const handleOpenAddDrawer = () => {
     const firstCat = categories.length > 0 ? categories[0].name : 'Skin Rejuvenation';
@@ -408,14 +780,55 @@ export const ServicesPage = () => {
       ...DEFAULT_FORM,
       category: firstCat,
       category_id: categories[0]?.id || '',
-      duration: firstDur
+      duration: firstDur,
+      image_url: '',
+      images: []
     });
+    setTreatmentImages([]);
+    setImageUrlInput('');
+    setImageError(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (replaceFileInputRef.current) replaceFileInputRef.current.value = '';
     setFormErrors({});
     setEditingTreatment(null);
     setIsDrawerOpen(true);
   };
 
   const handleOpenEditDrawer = (treatment) => {
+    let loadedImages = [];
+    if (Array.isArray(treatment.images) && treatment.images.length > 0) {
+      loadedImages = treatment.images
+        .map((img, idx) => {
+          if (typeof img === 'string') {
+            return {
+              id: `img_${idx}_${Date.now()}`,
+              url: img,
+              sequence: idx + 1,
+              name: `Image #${idx + 1}`
+            };
+          }
+          return {
+            id: img.id || `img_${idx}_${Date.now()}`,
+            url: img.url || '',
+            sequence: typeof img.sequence === 'number' ? img.sequence : idx + 1,
+            name: img.name || `Image #${idx + 1}`
+          };
+        })
+        .filter(item => Boolean(item.url))
+        .sort((a, b) => a.sequence - b.sequence);
+    } else if (treatment.image_url || treatment.image) {
+      const singleUrl = treatment.image_url || treatment.image;
+      loadedImages = [
+        {
+          id: `img_primary_${Date.now()}`,
+          url: singleUrl,
+          sequence: 1,
+          name: 'Primary Image'
+        }
+      ];
+    }
+
+    setTreatmentImages(loadedImages);
     setFormData({
       protocol_title: treatment.protocol_title || treatment.title || '',
       category_id: treatment.category_id || '',
@@ -424,8 +837,14 @@ export const ServicesPage = () => {
       duration: treatment.duration || '60 Mins',
       status: treatment.status || 'Active',
       tagline: treatment.tagline || '',
-      clinical_description: treatment.clinical_description || treatment.description || ''
+      clinical_description: treatment.clinical_description || treatment.description || '',
+      image_url: loadedImages[0]?.url || '',
+      images: loadedImages
     });
+    setImageUrlInput('');
+    setImageError(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (replaceFileInputRef.current) replaceFileInputRef.current.value = '';
     setFormErrors({});
     setEditingTreatment(treatment);
     setIsDrawerOpen(true);
@@ -436,11 +855,17 @@ export const ServicesPage = () => {
       setIsDrawerOpen(false);
       setEditingTreatment(null);
       setFormErrors({});
+      setTreatmentImages([]);
+      setImageUrlInput('');
+      setImageError(null);
+      setReplacingImageId(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      if (replaceFileInputRef.current) replaceFileInputRef.current.value = '';
     }
   };
 
   // ─────────────────────────────────────────────────────────────
-  // 5. VALIDATION & SAVE TREATMENT (CREATE & UPDATE)
+  // 6. VALIDATION & SAVE TREATMENT (CREATE & UPDATE)
   // ─────────────────────────────────────────────────────────────
   const validateForm = () => {
     const errors = {};
@@ -472,18 +897,49 @@ export const ServicesPage = () => {
     }
 
     setSubmitting(true);
+    setUploadingImage(true);
+
+    let finalImagesList = [];
+    try {
+      for (let i = 0; i < treatmentImages.length; i++) {
+        const item = treatmentImages[i];
+        let finalUrl = item.url;
+        if (item.file) {
+          try {
+            const uploadedUrl = await uploadTreatmentImage(item.file);
+            if (uploadedUrl) finalUrl = uploadedUrl;
+          } catch (uploadErr) {
+            console.warn('Image upload error for file:', item.name, uploadErr);
+          }
+        }
+        finalImagesList.push({
+          id: item.id || `img_${Date.now()}_${i}`,
+          url: finalUrl,
+          sequence: i + 1,
+          name: item.name || `Image #${i + 1}`
+        });
+      }
+    } finally {
+      setUploadingImage(false);
+    }
+
+    const primaryImageUrl = finalImagesList[0]?.url || null;
     const numPrice = parseFloat(formData.price);
-    const matchedCategory = categories.find(c => c.name.toLowerCase() === formData.category.toLowerCase());
 
     const treatmentPayload = {
       protocol_title: formData.protocol_title.trim(),
       category: formData.category.trim(),
-      category_id: matchedCategory?.id || null,
+      // category_id intentionally omitted: the FK references the Products
+      // 'categories' table. Treatment categories are managed independently
+      // via the 'treatment_categories' table. The category name string is
+      // the source of truth for treatment protocol lookups.
       price: numPrice,
       duration: formData.duration.trim(),
       status: formData.status,
       tagline: formData.tagline?.trim() || null,
       clinical_description: formData.clinical_description?.trim() || null,
+      image_url: primaryImageUrl,
+      images: finalImagesList,
       updated_at: new Date().toISOString()
     };
 
@@ -510,6 +966,36 @@ export const ServicesPage = () => {
           }
         }
 
+        // Graceful retry without 'images' if column doesn't exist yet
+        if (updateErr && (updateErr.message?.includes('images') || updateErr.code === '42703')) {
+          const { images: _discardImages, ...fallbackImagesPayload } = treatmentPayload;
+          const retryRes = await supabase
+            .from('treatment_protocols')
+            .update(fallbackImagesPayload)
+            .eq('id', editingTreatment.id)
+            .select()
+            .single();
+          if (!retryRes.error) {
+            data = retryRes.data;
+            updateErr = null;
+          }
+        }
+
+        // Graceful retry without 'image_url' if column does not exist
+        if (updateErr && (updateErr.message?.includes('image_url') || updateErr.code === '42703')) {
+          const { image_url: _discardImg, images: _discardImg2, ...fallbackPayload } = treatmentPayload;
+          const retryRes = await supabase
+            .from('treatment_protocols')
+            .update(fallbackPayload)
+            .eq('id', editingTreatment.id)
+            .select()
+            .single();
+          if (!retryRes.error) {
+            data = retryRes.data;
+            updateErr = null;
+          }
+        }
+
         // Fallback to services table if treatment_protocols was not found
         if (updateErr) {
           const srvPayload = {
@@ -520,7 +1006,9 @@ export const ServicesPage = () => {
             duration: treatmentPayload.duration,
             status: treatmentPayload.status,
             tagline: treatmentPayload.tagline,
-            description: treatmentPayload.clinical_description
+            description: treatmentPayload.clinical_description,
+            image_url: primaryImageUrl,
+            image: primaryImageUrl
           };
           const fallbackRes = await supabase
             .from('services')
@@ -541,6 +1029,13 @@ export const ServicesPage = () => {
         }
 
         toast.success(`Protocol "${treatmentPayload.protocol_title}" updated successfully.`);
+        if (selectedTreatment && selectedTreatment.id === editingTreatment.id) {
+          setSelectedTreatment(prev => ({
+            ...prev,
+            ...treatmentPayload,
+            images: finalImagesList
+          }));
+        }
         await fetchTreatments();
         setIsDrawerOpen(false);
         setEditingTreatment(null);
@@ -569,6 +1064,34 @@ export const ServicesPage = () => {
           }
         }
 
+        // Graceful retry without 'images' if column does not exist
+        if (insertErr && (insertErr.message?.includes('images') || insertErr.code === '42703')) {
+          const { images: _discardImages, ...fallbackImagesPayload } = insertPayload;
+          const retryRes = await supabase
+            .from('treatment_protocols')
+            .insert([fallbackImagesPayload])
+            .select()
+            .single();
+          if (!retryRes.error) {
+            data = retryRes.data;
+            insertErr = null;
+          }
+        }
+
+        // Graceful retry without 'image_url' if column does not exist
+        if (insertErr && (insertErr.message?.includes('image_url') || insertErr.code === '42703')) {
+          const { image_url: _discardImg, images: _discardImg2, ...fallbackPayload } = insertPayload;
+          const retryRes = await supabase
+            .from('treatment_protocols')
+            .insert([fallbackPayload])
+            .select()
+            .single();
+          if (!retryRes.error) {
+            data = retryRes.data;
+            insertErr = null;
+          }
+        }
+
         // Fallback to services table if needed
         if (insertErr) {
           const srvPayload = {
@@ -580,6 +1103,8 @@ export const ServicesPage = () => {
             status: insertPayload.status,
             tagline: insertPayload.tagline,
             description: insertPayload.clinical_description,
+            image_url: primaryImageUrl,
+            image: primaryImageUrl,
             created_at: insertPayload.created_at
           };
           const fallbackRes = await supabase
@@ -699,7 +1224,10 @@ export const ServicesPage = () => {
   };
 
   // ─────────────────────────────────────────────────────────────
-  // 8. CATEGORY CRUD OPERATIONS
+  // 8. TREATMENT CATEGORY CRUD OPERATIONS
+  //    NOTE: All operations target 'treatment_categories' table.
+  //    The 'categories' table is used exclusively by Products
+  //    and is never touched here.
   // ─────────────────────────────────────────────────────────────
   const handleCreateCategory = async (e) => {
     if (e) e.preventDefault();
@@ -722,25 +1250,26 @@ export const ServicesPage = () => {
       const payload = { name: cleanName, created_at: new Date().toISOString() };
       let created = null;
 
-      const { data, error: catErr } = await supabase.from('categories').insert([payload]).select().single();
+      // Insert into treatment_categories (not the Products 'categories' table)
+      const { data, error: catErr } = await supabase.from('treatment_categories').insert([payload]).select().single();
       if (!catErr && data) {
         created = data;
       } else {
-        const adminRes = await supabaseAdmin.from('categories').insert([payload]).select().single();
+        const adminRes = await supabaseAdmin.from('treatment_categories').insert([payload]).select().single();
         if (!adminRes.error && adminRes.data) created = adminRes.data;
       }
 
       const newCatItem = created || { id: `cat-${Date.now()}`, name: cleanName };
       const updatedList = [...categories, newCatItem].sort((a, b) => a.name.localeCompare(b.name));
       setCategories(updatedList);
-      try { localStorage.setItem('bo_categories_cache', JSON.stringify(updatedList)); } catch (_) { }
+      try { localStorage.setItem('bo_treatment_categories_cache', JSON.stringify(updatedList)); } catch (_) { }
 
       // If user was creating a treatment, set this new category as selected
       setFormData(prev => ({ ...prev, category: cleanName, category_id: newCatItem.id }));
       setNewCategoryName('');
       toast.success(`Category "${cleanName}" added.`);
     } catch (err) {
-      console.error('Error adding category:', err);
+      console.error('Error adding treatment category:', err);
       toast.error('Failed to add category: ' + (err?.message || 'Error'));
     } finally {
       setCategoryActionLoading(false);
@@ -760,10 +1289,10 @@ export const ServicesPage = () => {
 
     setCategoryActionLoading(true);
     try {
-      // 1. Update in Supabase categories table
-      await supabase.from('categories').update({ name: cleanNewName, updated_at: new Date().toISOString() }).eq('id', catId);
+      // 1. Update in Supabase treatment_categories table (not Products 'categories')
+      await supabase.from('treatment_categories').update({ name: cleanNewName, updated_at: new Date().toISOString() }).eq('id', catId);
 
-      // 2. Cascade rename on treatments using this category
+      // 2. Cascade rename on treatment_protocols using this category
       try {
         await supabase.from('treatment_protocols').update({ category: cleanNewName }).eq('category', currentName);
       } catch (_) { }
@@ -784,7 +1313,7 @@ export const ServicesPage = () => {
       setEditingCategoryName('');
       toast.success(`Category renamed to "${cleanNewName}".`);
     } catch (err) {
-      console.error('Error updating category:', err);
+      console.error('Error updating treatment category:', err);
       toast.error('Failed to update category.');
     } finally {
       setCategoryActionLoading(false);
@@ -809,12 +1338,13 @@ export const ServicesPage = () => {
 
     setCategoryActionLoading(true);
     try {
-      await supabase.from('categories').delete().eq('id', id);
-      await supabase.from('categories').delete().eq('name', name);
+      // Delete from treatment_categories (not the Products 'categories' table)
+      await supabase.from('treatment_categories').delete().eq('id', id);
+      await supabase.from('treatment_categories').delete().eq('name', name);
 
       const updatedList = categories.filter(c => c.id !== id && c.name !== name);
       setCategories(updatedList);
-      try { localStorage.setItem('bo_categories_cache', JSON.stringify(updatedList)); } catch (_) { }
+      try { localStorage.setItem('bo_treatment_categories_cache', JSON.stringify(updatedList)); } catch (_) { }
 
       if (categoryFilter === name) setCategoryFilter('ALL');
       if (formData.category === name) {
@@ -824,7 +1354,7 @@ export const ServicesPage = () => {
       setCategoryDeleteTarget(null);
       toast.success(`Category "${name}" deleted.`);
     } catch (err) {
-      console.error('Error deleting category:', err);
+      console.error('Error deleting treatment category:', err);
       toast.error('Failed to delete category.');
     } finally {
       setCategoryActionLoading(false);
@@ -981,22 +1511,125 @@ export const ServicesPage = () => {
       header: 'Protocol / Service',
       accessor: 'protocol_title',
       sortable: true,
-      render: (row) => (
-        <div
-          onClick={() => setSelectedTreatment(row)}
-          style={{ cursor: 'pointer', userSelect: 'none' }}
-          title={`View ${row.protocol_title} details`}
-        >
-          <div style={{ fontWeight: 600, color: '#0f2942', fontSize: '0.92rem' }}>
-            {row.protocol_title}
-          </div>
-          {row.tagline && (
-            <div style={{ fontSize: '0.76rem', color: '#64748b', marginTop: '2px' }}>
-              {row.tagline}
+      render: (row) => {
+        const rowImages = Array.isArray(row.images) ? row.images : [];
+        const primaryImg = rowImages.find(img => img.sequence === 1) || rowImages[0];
+        const imageUrl = primaryImg?.url || row.image_url || row.image || null;
+        const totalCount = rowImages.length > 0 ? rowImages.length : (imageUrl ? 1 : 0);
+
+        return (
+          <div
+            onClick={() => setSelectedTreatment(row)}
+            style={{
+              cursor: 'pointer',
+              userSelect: 'none',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px'
+            }}
+            title={`View ${row.protocol_title} details & gallery`}
+          >
+            {/* Small dynamic thumbnail or fallback placeholder */}
+            <div
+              style={{
+                position: 'relative',
+                width: '42px',
+                height: '42px',
+                borderRadius: '8px',
+                overflow: 'hidden',
+                flexShrink: 0,
+                background: '#f1f5f9',
+                border: '1px solid #e2e8f0',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+            >
+              {imageUrl ? (
+                <img
+                  src={imageUrl}
+                  alt={row.protocol_title}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                    if (e.currentTarget.nextElementSibling) {
+                      e.currentTarget.nextElementSibling.style.display = 'flex';
+                    }
+                  }}
+                />
+              ) : null}
+              <div
+                style={{
+                  color: '#94a3b8',
+                  display: imageUrl ? 'none' : 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '100%',
+                  height: '100%'
+                }}
+              >
+                <ImageIcon size={18} />
+              </div>
+
+              {/* Multi-image count overlay badge */}
+              {totalCount > 1 && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    bottom: '2px',
+                    right: '2px',
+                    background: 'rgba(15, 23, 42, 0.82)',
+                    color: '#ffffff',
+                    fontSize: '0.62rem',
+                    fontWeight: 700,
+                    padding: '1px 3.5px',
+                    borderRadius: '4px',
+                    lineHeight: 1,
+                    letterSpacing: '-0.2px',
+                    backdropFilter: 'blur(2px)'
+                  }}
+                  title={`${totalCount} treatment photos`}
+                >
+                  +{totalCount - 1}
+                </div>
+              )}
             </div>
-          )}
-        </div>
-      )
+
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontWeight: 600, color: '#0f2942', fontSize: '0.92rem', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {row.protocol_title}
+                </span>
+                {totalCount > 1 && (
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '2px',
+                      fontSize: '0.68rem',
+                      fontWeight: 600,
+                      color: '#475569',
+                      background: '#f1f5f9',
+                      padding: '1px 5px',
+                      borderRadius: '4px',
+                      flexShrink: 0
+                    }}
+                    title={`${totalCount} treatment images saved`}
+                  >
+                    <ImageIcon size={10} />
+                    {totalCount}
+                  </span>
+                )}
+              </div>
+              {row.tagline && (
+                <div style={{ fontSize: '0.76rem', color: '#64748b', marginTop: '2px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {row.tagline}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
     },
     {
       header: 'Category',
@@ -1462,7 +2095,7 @@ export const ServicesPage = () => {
               )}
             </div>
 
-          {/* Status * (Active / Inactive) — spans full row since Appointment Date removed */}
+            {/* Status * (Active / Inactive) — spans full row since Appointment Date removed */}
             <div className="admin-form-group" style={{ gridColumn: '1 / -1' }}>
               <label className="admin-form-label">
                 Status <span style={{ color: '#dc2626' }}>*</span>
@@ -1476,6 +2109,392 @@ export const ServicesPage = () => {
                 ]}
               />
             </div>
+          </div>
+
+          {/* Treatment Images & Multi-Image Gallery */}
+          <div className="admin-form-group">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+              <label className="admin-form-label" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <ImageIcon size={15} color="#1e5aa8" />
+                <span>Treatment Images & Gallery</span>
+              </label>
+              <span
+                style={{
+                  fontSize: '0.72rem',
+                  fontWeight: 600,
+                  color: treatmentImages.length > 0 ? '#1e5aa8' : '#94a3b8',
+                  background: treatmentImages.length > 0 ? '#eff6ff' : '#f1f5f9',
+                  padding: '2px 8px',
+                  borderRadius: '9999px',
+                  border: treatmentImages.length > 0 ? '1px solid #bfdbfe' : '1px solid #e2e8f0'
+                }}
+              >
+                {treatmentImages.length} {treatmentImages.length === 1 ? 'Image' : 'Images'}
+              </span>
+            </div>
+
+            <div style={{ fontSize: '0.74rem', color: '#64748b', marginBottom: '12px', lineHeight: 1.4 }}>
+              Add multiple images from your device or via public URLs. Drag and drop to adjust sequence. <strong style={{ color: '#0f2942' }}>Image #1</strong> serves as the primary cover image.
+            </div>
+
+            {/* Hidden native file inputs */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept="image/jpeg,image/png,image/webp,image/jpg,image/gif,image/svg+xml"
+              style={{ display: 'none' }}
+              onChange={(e) => handleAddFiles(e.target.files)}
+            />
+            <input
+              ref={replaceFileInputRef}
+              type="file"
+              accept="image/jpeg,image/png,image/webp,image/jpg,image/gif,image/svg+xml"
+              style={{ display: 'none' }}
+              onChange={handleReplaceFileChange}
+            />
+
+            {/* Gallery Image Sequence List */}
+            {treatmentImages.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '14px' }}>
+                {treatmentImages.map((item, index) => {
+                  const isPrimary = index === 0;
+                  const isDragged = draggedImageIndex === index;
+
+                  return (
+                    <div
+                      key={item.id || index}
+                      draggable
+                      onDragStart={(e) => handleDragStart(e, index)}
+                      onDragOver={(e) => handleDragOver(e, index)}
+                      onDrop={(e) => handleDrop(e, index)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '10px',
+                        padding: '10px',
+                        borderRadius: '10px',
+                        background: isPrimary ? '#f8faff' : '#ffffff',
+                        border: isPrimary ? '1.5px solid #93c5fd' : '1px solid #e2e8f0',
+                        opacity: isDragged ? 0.4 : 1,
+                        boxShadow: isPrimary ? '0 2px 6px rgba(30,90,168,0.06)' : 'none',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      {/* Drag Handle */}
+                      <div
+                        style={{
+                          cursor: 'grab',
+                          color: '#94a3b8',
+                          display: 'flex',
+                          alignItems: 'center',
+                          padding: '2px'
+                        }}
+                        title="Drag to reorder sequence"
+                      >
+                        <GripVertical size={16} />
+                      </div>
+
+                      {/* Sequence Badge */}
+                      <div
+                        style={{
+                          fontSize: '0.7rem',
+                          fontWeight: 700,
+                          padding: '3px 8px',
+                          borderRadius: '6px',
+                          whiteSpace: 'nowrap',
+                          background: isPrimary ? '#1e5aa8' : '#f1f5f9',
+                          color: isPrimary ? '#ffffff' : '#475569',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '3px'
+                        }}
+                        title={`Sequence #${item.sequence || index + 1}`}
+                      >
+                        #{item.sequence || index + 1}
+                        {isPrimary && <span style={{ fontSize: '0.62rem', opacity: 0.9 }}>Cover</span>}
+                      </div>
+
+                      {/* Thumbnail Preview */}
+                      <div
+                        onClick={() => setViewingImage(item)}
+                        style={{
+                          width: '52px',
+                          height: '52px',
+                          borderRadius: '8px',
+                          overflow: 'hidden',
+                          background: '#f1f5f9',
+                          border: '1px solid #cbd5e1',
+                          flexShrink: 0,
+                          cursor: 'pointer',
+                          position: 'relative'
+                        }}
+                        title="Click to view full size"
+                      >
+                        <img
+                          src={item.url}
+                          alt={item.name || `Image #${index + 1}`}
+                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                        />
+                      </div>
+
+                      {/* Image Meta / Name */}
+                      <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                        <div
+                          style={{
+                            fontSize: '0.82rem',
+                            fontWeight: 600,
+                            color: '#1e293b',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            whiteSpace: 'nowrap'
+                          }}
+                          title={item.name}
+                        >
+                          {item.name || `Image #${index + 1}`}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span
+                            style={{
+                              fontSize: '0.68rem',
+                              color: item.file ? '#0284c7' : '#059669',
+                              background: item.file ? '#e0f2fe' : '#d1fae5',
+                              padding: '1px 6px',
+                              borderRadius: '4px',
+                              fontWeight: 600
+                            }}
+                          >
+                            {item.file ? 'Device Upload' : 'URL Link'}
+                          </span>
+                          {item.file && (
+                            <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>
+                              {(item.file.size / 1024).toFixed(0)} KB
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Action Buttons: Move Up/Down, View, Edit, Replace, Delete */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '3px' }}>
+                        <button
+                          type="button"
+                          onClick={() => handleMoveImage(index, 'up')}
+                          disabled={index === 0}
+                          style={{
+                            background: 'transparent',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '5px',
+                            padding: '4px',
+                            cursor: index === 0 ? 'not-allowed' : 'pointer',
+                            color: index === 0 ? '#cbd5e1' : '#64748b',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}
+                          title="Move up in sequence"
+                        >
+                          <ArrowUp size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleMoveImage(index, 'down')}
+                          disabled={index === treatmentImages.length - 1}
+                          style={{
+                            background: 'transparent',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '5px',
+                            padding: '4px',
+                            cursor: index === treatmentImages.length - 1 ? 'not-allowed' : 'pointer',
+                            color: index === treatmentImages.length - 1 ? '#cbd5e1' : '#64748b',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}
+                          title="Move down in sequence"
+                        >
+                          <ArrowDown size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setViewingImage(item)}
+                          style={{
+                            background: 'transparent',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '5px',
+                            padding: '4px',
+                            cursor: 'pointer',
+                            color: '#1e5aa8',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}
+                          title="View full image"
+                        >
+                          <Eye size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleOpenEditImageModal(item)}
+                          style={{
+                            background: 'transparent',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '5px',
+                            padding: '4px',
+                            cursor: 'pointer',
+                            color: '#475569',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}
+                          title="Edit label or URL"
+                        >
+                          <Edit2 size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleInitiateReplace(item)}
+                          style={{
+                            background: 'transparent',
+                            border: '1px solid #e2e8f0',
+                            borderRadius: '5px',
+                            padding: '4px',
+                            cursor: 'pointer',
+                            color: '#475569',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}
+                          title="Replace image from device"
+                        >
+                          <Camera size={13} />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteImage(item.id)}
+                          style={{
+                            background: '#fef2f2',
+                            border: '1px solid #fecaca',
+                            borderRadius: '5px',
+                            padding: '4px',
+                            cursor: 'pointer',
+                            color: '#dc2626',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}
+                          title="Delete image"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Add Images Controls: Upload Multi-file & Add via URL */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {/* Dropzone Upload Button */}
+              <div
+                onClick={() => fileInputRef.current?.click()}
+                onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (e.dataTransfer.files?.length) {
+                    handleAddFiles(e.dataTransfer.files);
+                  }
+                }}
+                style={{
+                  border: '1.5px dashed #cbd5e1',
+                  borderRadius: '10px',
+                  padding: '16px 14px',
+                  textAlign: 'center',
+                  cursor: 'pointer',
+                  background: '#f8fafc',
+                  transition: 'all 0.2s ease',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '12px'
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#1e5aa8'; e.currentTarget.style.background = '#f0f7ff'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = '#cbd5e1'; e.currentTarget.style.background = '#f8fafc'; }}
+              >
+                <div
+                  style={{
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '50%',
+                    background: '#e0f2fe',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    color: '#0284c7',
+                    flexShrink: 0
+                  }}
+                >
+                  <Upload size={16} />
+                </div>
+                <div style={{ textAlign: 'left' }}>
+                  <div style={{ fontSize: '0.82rem', fontWeight: 600, color: '#1e293b' }}>
+                    Select / Upload Images from Device
+                  </div>
+                  <div style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                    Supports multi-selection • JPG, PNG, WEBP, GIF (up to 10MB each)
+                  </div>
+                </div>
+              </div>
+
+              {/* Add by Image URL Bar */}
+              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <input
+                  type="url"
+                  className="admin-form-input"
+                  placeholder="Paste image URL (e.g. https://.../photo.jpg)"
+                  value={imageUrlInput}
+                  onChange={(e) => {
+                    setImageUrlInput(e.target.value);
+                    if (imageError) setImageError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      handleAddUrlImage();
+                    }
+                  }}
+                  style={{ flex: 1, padding: '8px 12px', fontSize: '0.82rem' }}
+                />
+                <AdminButton
+                  type="button"
+                  variant="secondary"
+                  onClick={handleAddUrlImage}
+                  disabled={!imageUrlInput.trim()}
+                  icon={<Link size={13} />}
+                  style={{ whiteSpace: 'nowrap', padding: '8px 14px' }}
+                >
+                  Add URL
+                </AdminButton>
+              </div>
+            </div>
+
+            {/* Error Message */}
+            {imageError && (
+              <div
+                style={{
+                  fontSize: '0.76rem',
+                  color: '#dc2626',
+                  marginTop: '8px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '5px'
+                }}
+              >
+                <AlertCircle size={13} />
+                <span>{imageError}</span>
+              </div>
+            )}
           </div>
 
           {/* Tagline (Optional) */}
@@ -1546,6 +2565,210 @@ export const ServicesPage = () => {
       >
         {selectedTreatment && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+            {/* Treatment Gallery & Hero Preview */}
+            {overviewImages.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                {/* Active Hero Image Container */}
+                <div
+                  style={{
+                    position: 'relative',
+                    width: '100%',
+                    height: '220px',
+                    borderRadius: '12px',
+                    overflow: 'hidden',
+                    background: '#0f172a',
+                    border: '1px solid #e2e8f0',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}
+                >
+                  <img
+                    src={overviewImages[overviewActiveImageIndex]?.url}
+                    alt={overviewImages[overviewActiveImageIndex]?.name || selectedTreatment.protocol_title}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+
+                  {/* Sequence Pill Badge */}
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: '12px',
+                      left: '12px',
+                      background: 'rgba(15, 23, 42, 0.78)',
+                      backdropFilter: 'blur(6px)',
+                      color: '#ffffff',
+                      fontSize: '0.72rem',
+                      fontWeight: 700,
+                      padding: '4px 9px',
+                      borderRadius: '6px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    #{overviewImages[overviewActiveImageIndex]?.sequence || overviewActiveImageIndex + 1}
+                    {overviewActiveImageIndex === 0 && (
+                      <span style={{ fontSize: '0.64rem', color: '#93c5fd' }}>• Cover Image</span>
+                    )}
+                  </div>
+
+                  {/* View Full Screen / Zoom Button */}
+                  <button
+                    type="button"
+                    onClick={() => setViewingImage(overviewImages[overviewActiveImageIndex])}
+                    style={{
+                      position: 'absolute',
+                      top: '12px',
+                      right: '12px',
+                      background: 'rgba(15, 23, 42, 0.78)',
+                      backdropFilter: 'blur(6px)',
+                      color: '#ffffff',
+                      border: 'none',
+                      borderRadius: '6px',
+                      padding: '6px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}
+                    title="View full resolution"
+                  >
+                    <Maximize2 size={14} />
+                  </button>
+
+                  {/* Previous / Next Arrow Controls */}
+                  {overviewImages.length > 1 && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setOverviewActiveImageIndex(prev => (prev > 0 ? prev - 1 : overviewImages.length - 1))}
+                        style={{
+                          position: 'absolute',
+                          left: '10px',
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          background: 'rgba(255, 255, 255, 0.9)',
+                          border: 'none',
+                          borderRadius: '50%',
+                          width: '32px',
+                          height: '32px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          boxShadow: '0 2px 8px rgba(0,0,0,0.2)'
+                        }}
+                        title="Previous image"
+                      >
+                        <ChevronLeft size={16} color="#0f172a" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setOverviewActiveImageIndex(prev => (prev < overviewImages.length - 1 ? prev + 1 : 0))}
+                        style={{
+                          position: 'absolute',
+                          right: '10px',
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          background: 'rgba(255, 255, 255, 0.9)',
+                          border: 'none',
+                          borderRadius: '50%',
+                          width: '32px',
+                          height: '32px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          boxShadow: '0 2px 8px rgba(0,0,0,0.2)'
+                        }}
+                        title="Next image"
+                      >
+                        <ChevronRight size={16} color="#0f172a" />
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                {/* Horizontal Sequence Thumbnails Strip */}
+                {overviewImages.length > 1 && (
+                  <div
+                    style={{
+                      display: 'flex',
+                      gap: '8px',
+                      overflowX: 'auto',
+                      paddingBottom: '4px'
+                    }}
+                  >
+                    {overviewImages.map((img, idx) => {
+                      const isActive = idx === overviewActiveImageIndex;
+                      return (
+                        <button
+                          key={img.id || idx}
+                          type="button"
+                          onClick={() => setOverviewActiveImageIndex(idx)}
+                          style={{
+                            position: 'relative',
+                            width: '58px',
+                            height: '58px',
+                            flexShrink: 0,
+                            borderRadius: '8px',
+                            overflow: 'hidden',
+                            border: isActive ? '2px solid #1e5aa8' : '1px solid #cbd5e1',
+                            padding: 0,
+                            cursor: 'pointer',
+                            background: '#f8fafc',
+                            transition: 'all 0.15s ease',
+                            opacity: isActive ? 1 : 0.7
+                          }}
+                        >
+                          <img
+                            src={img.url}
+                            alt={img.name || `Thumbnail #${idx + 1}`}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          />
+                          <span
+                            style={{
+                              position: 'absolute',
+                              bottom: '2px',
+                              right: '2px',
+                              background: 'rgba(15, 23, 42, 0.8)',
+                              color: '#fff',
+                              fontSize: '0.6rem',
+                              fontWeight: 700,
+                              padding: '1px 4px',
+                              borderRadius: '3px'
+                            }}
+                          >
+                            #{img.sequence || idx + 1}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div
+                style={{
+                  width: '100%',
+                  padding: '24px 16px',
+                  borderRadius: '12px',
+                  background: '#f8fafc',
+                  border: '1.5px dashed #cbd5e1',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '6px',
+                  color: '#94a3b8'
+                }}
+              >
+                <ImageIcon size={26} />
+                <span style={{ fontSize: '0.8rem', fontWeight: 500 }}>No treatment imagery uploaded</span>
+              </div>
+            )}
+
             {/* Top Identity Card */}
             <div
               style={{
@@ -2021,6 +3244,120 @@ export const ServicesPage = () => {
         title="Delete Treatment Protocol"
         message={`Are you sure you want to permanently delete "${deleteConfirmTreatment?.protocol_title}"? It will no longer be visible or bookable.`}
       />
+
+      {/* ── Lightbox / Full-Resolution View Modal ── */}
+      <AdminModal
+        isOpen={Boolean(viewingImage)}
+        onClose={() => setViewingImage(null)}
+        title={viewingImage ? `Image #${viewingImage.sequence || 1} Preview` : 'Image Preview'}
+        maxWidth="680px"
+      >
+        {viewingImage && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div
+              style={{
+                width: '100%',
+                maxHeight: '480px',
+                borderRadius: '10px',
+                overflow: 'hidden',
+                background: '#0f172a',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                border: '1px solid #e2e8f0'
+              }}
+            >
+              <img
+                src={viewingImage.url}
+                alt={viewingImage.name || 'Treatment Image'}
+                style={{ maxWidth: '100%', maxHeight: '480px', objectFit: 'contain' }}
+              />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: '0.92rem', color: '#1e293b' }}>
+                  {viewingImage.name || `Image #${viewingImage.sequence || 1}`}
+                </div>
+                <div style={{ fontSize: '0.74rem', color: '#64748b', marginTop: '2px' }}>
+                  Sequence Order: #{viewingImage.sequence || 1} {viewingImage.sequence === 1 ? '• Primary Cover Photo' : ''}
+                </div>
+              </div>
+              <AdminButton variant="secondary" onClick={() => setViewingImage(null)}>
+                Close Preview
+              </AdminButton>
+            </div>
+          </div>
+        )}
+      </AdminModal>
+
+      {/* ── Edit Image Details Modal ── */}
+      <AdminModal
+        isOpen={Boolean(editingImageItem)}
+        onClose={() => setEditingImageItem(null)}
+        title="Edit Image Details"
+        maxWidth="500px"
+      >
+        {editingImageItem && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{ display: 'flex', gap: '14px', alignItems: 'center' }}>
+              <div
+                style={{
+                  width: '64px',
+                  height: '64px',
+                  borderRadius: '8px',
+                  overflow: 'hidden',
+                  border: '1px solid #cbd5e1',
+                  flexShrink: 0,
+                  background: '#f8fafc'
+                }}
+              >
+                <img
+                  src={editingImageItem.url}
+                  alt="Preview"
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: '0.74rem', color: '#64748b' }}>Sequence Position</div>
+                <div style={{ fontSize: '0.94rem', fontWeight: 700, color: '#0f2942' }}>
+                  #{editingImageItem.sequence || 1} {editingImageItem.sequence === 1 ? '• Primary Cover' : ''}
+                </div>
+              </div>
+            </div>
+
+            <div className="admin-form-group">
+              <label className="admin-form-label">Image Label / Description</label>
+              <input
+                type="text"
+                className="admin-form-input"
+                value={editingImageName}
+                onChange={(e) => setEditingImageName(e.target.value)}
+                placeholder="e.g. Clinical Before & After, Close-up Result"
+              />
+            </div>
+
+            <div className="admin-form-group">
+              <label className="admin-form-label">Image URL / Reference</label>
+              <input
+                type="text"
+                className="admin-form-input"
+                value={editingImageUrl}
+                onChange={(e) => setEditingImageUrl(e.target.value)}
+                placeholder="https://..."
+              />
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px', borderTop: '1px solid #f1f5f9', paddingTop: '12px' }}>
+              <AdminButton variant="secondary" onClick={() => setEditingImageItem(null)}>
+                Cancel
+              </AdminButton>
+              <AdminButton variant="primary" onClick={handleSaveEditedImage}>
+                Save Details
+              </AdminButton>
+            </div>
+          </div>
+        )}
+      </AdminModal>
     </div>
   );
 };

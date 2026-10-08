@@ -102,6 +102,8 @@ CREATE TABLE IF NOT EXISTS public.treatment_protocols (
   appointment_time      TEXT,
   tagline               TEXT,
   clinical_description  TEXT,
+  image_url             TEXT,
+  images                JSONB DEFAULT '[]'::jsonb,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at            TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -117,6 +119,8 @@ ALTER TABLE public.treatment_protocols ADD COLUMN IF NOT EXISTS appointment_date
 ALTER TABLE public.treatment_protocols ADD COLUMN IF NOT EXISTS appointment_time TEXT;
 ALTER TABLE public.treatment_protocols ADD COLUMN IF NOT EXISTS tagline TEXT;
 ALTER TABLE public.treatment_protocols ADD COLUMN IF NOT EXISTS clinical_description TEXT;
+ALTER TABLE public.treatment_protocols ADD COLUMN IF NOT EXISTS image_url TEXT;
+ALTER TABLE public.treatment_protocols ADD COLUMN IF NOT EXISTS images JSONB DEFAULT '[]'::jsonb;
 ALTER TABLE public.treatment_protocols ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
 ALTER TABLE public.treatment_protocols ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
 
@@ -136,3 +140,34 @@ CREATE POLICY "Allow all on public.treatment_protocols"
   WITH CHECK (true);
 
 GRANT ALL ON public.treatment_protocols TO authenticated, anon, service_role;
+
+-- ─────────────────────────────────────────────────────────────
+-- 5. STORAGE BUCKET: treatments
+-- ─────────────────────────────────────────────────────────────
+INSERT INTO storage.buckets (id, name, public)
+VALUES ('treatments', 'treatments', true)
+ON CONFLICT (id) DO NOTHING;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'Public Access Treatments'
+  ) THEN
+    CREATE POLICY "Public Access Treatments" ON storage.objects
+      FOR SELECT TO public USING (bucket_id = 'treatments');
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'Public Insert Treatments'
+  ) THEN
+    CREATE POLICY "Public Insert Treatments" ON storage.objects
+      FOR INSERT TO public WITH CHECK (bucket_id = 'treatments');
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND policyname = 'Public Update Treatments'
+  ) THEN
+    CREATE POLICY "Public Update Treatments" ON storage.objects
+      FOR UPDATE TO public USING (bucket_id = 'treatments');
+  END IF;
+END $$;

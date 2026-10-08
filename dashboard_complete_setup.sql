@@ -559,3 +559,65 @@ CREATE TRIGGER trg_validate_appointment_slot
   FOR EACH ROW
   EXECUTE FUNCTION public.fn_validate_appointment_slot();
 
+
+-- ============================================================
+-- TABLE 7: COUPONS (Promotions & Discount Codes)
+-- ============================================================
+CREATE TABLE IF NOT EXISTS public.coupons (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code TEXT NOT NULL UNIQUE,
+  coupon_code TEXT,
+  description TEXT,
+  discount_type TEXT NOT NULL DEFAULT 'percentage',
+  discount_value NUMERIC(10,2) NOT NULL DEFAULT 0,
+  discount_amount NUMERIC(10,2),
+  discount_percent NUMERIC(10,2),
+  min_order_amount NUMERIC(10,2) DEFAULT 0,
+  min_spend NUMERIC(10,2) DEFAULT 0,
+  usage_limit INTEGER,
+  usage_count INTEGER DEFAULT 0,
+  max_uses INTEGER,
+  times_used INTEGER DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'Active',
+  start_date TIMESTAMPTZ DEFAULT NOW(),
+  expiry_date TIMESTAMPTZ,
+  end_date TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Ensure all columns exist
+ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS code TEXT;
+ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS coupon_code TEXT;
+ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS discount_type TEXT DEFAULT 'percentage';
+ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS discount_value NUMERIC(10,2) DEFAULT 0;
+ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS discount_amount NUMERIC(10,2);
+ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS discount_percent NUMERIC(10,2);
+ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS min_order_amount NUMERIC(10,2) DEFAULT 0;
+ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS min_spend NUMERIC(10,2) DEFAULT 0;
+ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS usage_limit INTEGER;
+ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS usage_count INTEGER DEFAULT 0;
+ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS max_uses INTEGER;
+ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS times_used INTEGER DEFAULT 0;
+ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'Active';
+ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS start_date TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS expiry_date TIMESTAMPTZ;
+ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS end_date TIMESTAMPTZ;
+ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
+ALTER TABLE public.coupons ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+-- Enable RLS & Policies for coupons
+ALTER TABLE public.coupons ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Allow anon read coupons" ON public.coupons;
+CREATE POLICY "Allow anon read coupons" ON public.coupons FOR SELECT TO public USING (true);
+DROP POLICY IF EXISTS "Allow anon insert coupons" ON public.coupons;
+CREATE POLICY "Allow anon insert coupons" ON public.coupons FOR INSERT TO public WITH CHECK (true);
+DROP POLICY IF EXISTS "Allow anon update coupons" ON public.coupons;
+CREATE POLICY "Allow anon update coupons" ON public.coupons FOR UPDATE TO public USING (true);
+DROP POLICY IF EXISTS "Allow anon delete coupons" ON public.coupons;
+CREATE POLICY "Allow anon delete coupons" ON public.coupons FOR DELETE TO public USING (true);
+
+GRANT ALL ON public.coupons TO authenticated, anon, service_role;
+
+

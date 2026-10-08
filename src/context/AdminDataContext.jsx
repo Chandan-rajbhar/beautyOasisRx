@@ -23,6 +23,7 @@ export const AdminDataProvider = ({ children }) => {
   const [notifications, setNotifications] = useState(() => supabaseDataService.getCachedData('notifications', []));
   const [activityLogs, setActivityLogs] = useState(() => supabaseDataService.getCachedData('activity_logs', []));
   const [users, setUsers] = useState(() => supabaseDataService.getCachedData('users', []));
+  const [coupons, setCoupons] = useState(() => supabaseDataService.getCachedData('coupons', []));
   const [websiteContent, setWebsiteContent] = useState(() => supabaseDataService.getCachedData('website_content', {}));
   const [settings, setSettings] = useState(() => supabaseDataService.getCachedData('settings', {}));
 
@@ -50,7 +51,7 @@ export const AdminDataProvider = ({ children }) => {
         const [
           apptData, clientData, serviceData, productData, categoryData,
           orderData, paymentData, providerData, inquiryData,
-          notifData, actData, userData, contentData, settingsData
+          notifData, actData, userData, couponData, contentData, settingsData
         ] = await Promise.all([
           supabaseDataService.fetchAll('appointments'),
           supabaseDataService.fetchAll('clients'),
@@ -64,6 +65,7 @@ export const AdminDataProvider = ({ children }) => {
           supabaseDataService.fetchAll('notifications'),
           supabaseDataService.fetchAll('activity_logs'),
           supabaseDataService.fetchAll('users'),
+          supabaseDataService.fetchAll('coupons'),
           supabaseDataService.fetchAll('website_content'),
           supabaseDataService.fetchAll('settings'),
         ]);
@@ -81,6 +83,7 @@ export const AdminDataProvider = ({ children }) => {
           setNotifications(notifData);
           setActivityLogs(actData);
           setUsers(userData);
+          setCoupons(couponData);
           setWebsiteContent(contentData);
           setSettings(settingsData);
         }
@@ -118,6 +121,7 @@ export const AdminDataProvider = ({ children }) => {
       supabaseDataService.subscribe('notifications', setNotifications),
       supabaseDataService.subscribe('activity_logs', setActivityLogs),
       supabaseDataService.subscribe('users', setUsers),
+      supabaseDataService.subscribe('coupons', setCoupons),
       supabaseDataService.subscribe('website_content', setWebsiteContent),
       supabaseDataService.subscribe('settings', setSettings),
     ];
@@ -288,6 +292,7 @@ export const AdminDataProvider = ({ children }) => {
         notifications,
         activityLogs,
         users,
+        coupons,
         websiteContent,
         settings,
         stats,
