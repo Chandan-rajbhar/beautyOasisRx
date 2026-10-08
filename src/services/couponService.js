@@ -48,24 +48,35 @@ export function normalizeCoupon(item) {
       : null;
 
   const usageCount = Number(
-    item.usage_count !== undefined && item.usage_count !== null
-      ? item.usage_count
-      : item.times_used !== undefined && item.times_used !== null
-        ? item.times_used
-        : item.usage || 0
+    item.used_count !== undefined && item.used_count !== null
+      ? item.used_count
+      : item.usage_count !== undefined && item.usage_count !== null
+        ? item.usage_count
+        : item.times_used !== undefined && item.times_used !== null
+          ? item.times_used
+          : item.usage || 0
   );
 
-  const rawStatus = (item.status || 'Active').trim();
-  const rawStatusLower = rawStatus.toLowerCase();
-  const startDate = item.start_date || item.created_at || null;
-  const expiryDate = item.expiry_date || item.end_date || item.expires_at || null;
+  // Active status resolution: check boolean is_active first, then status string
+  const hasIsActive = item.is_active !== undefined && item.is_active !== null;
+  const isActiveBool = hasIsActive
+    ? Boolean(item.is_active)
+    : (item.status ? String(item.status).toLowerCase() === 'active' : true);
 
-  // Compute live status — manual Inactive overrides auto-computed states
+  const rawStatus = item.status !== undefined && item.status !== null
+    ? String(item.status).trim()
+    : (isActiveBool ? 'Active' : 'Inactive');
+
+  const rawStatusLower = rawStatus.toLowerCase();
+  const startDate = item.starts_at || item.start_date || item.created_at || null;
+  const expiryDate = item.expires_at || item.expiry_date || item.end_date || null;
+
+  // Compute live status — manual Inactive (or is_active === false) overrides auto-computed states
   let computedStatus;
   const isPastExpiry = expiryDate && new Date(expiryDate).getTime() < Date.now();
   const isExhausted = usageLimit !== null && usageLimit > 0 && usageCount >= usageLimit;
 
-  if (rawStatusLower === 'inactive') {
+  if (!isActiveBool || rawStatusLower === 'inactive') {
     computedStatus = 'Inactive';
   } else if (isPastExpiry) {
     computedStatus = 'Expired';
@@ -91,11 +102,15 @@ export function normalizeCoupon(item) {
     usage_limit: usageLimit,
     max_uses: usageLimit,
     usage_count: usageCount,
+    used_count: usageCount,
     times_used: usageCount,
+    is_active: computedStatus === 'Active',
     status: computedStatus,
-    raw_status: rawStatus,
+    raw_status: computedStatus,
     start_date: startDate,
+    starts_at: startDate,
     expiry_date: expiryDate,
+    expires_at: expiryDate,
     end_date: expiryDate,
     created_at: item.created_at || new Date().toISOString(),
     updated_at: item.updated_at || new Date().toISOString(),
@@ -136,7 +151,13 @@ export async function fetchCoupons() {
         .order('created_at', { ascending: false });
 
       if (!adminRes.error && Array.isArray(adminRes.data)) {
-        return adminRes.data.map(normalizeCoupon);
+        const normalized = adminRes.data.map(normalizeCoupon);
+        try {
+          if (typeof supabaseDataService.saveToStorage === 'function') {
+            supabaseDataService.saveToStorage('coupons', normalized);
+          }
+        } catch (_) {}
+        return normalized;
       }
 
       // Check if table missing
@@ -149,7 +170,13 @@ export async function fetchCoupons() {
       throw res.error;
     }
 
-    return (res.data || []).map(normalizeCoupon);
+    const normalized = (res.data || []).map(normalizeCoupon);
+    try {
+      if (typeof supabaseDataService.saveToStorage === 'function') {
+        supabaseDataService.saveToStorage('coupons', normalized);
+      }
+    } catch (_) {}
+    return normalized;
   } catch (err) {
     console.error('[couponService] Error fetching coupons:', err);
     const cached = supabaseDataService.getCachedData('coupons', []);
@@ -436,6 +463,12 @@ export async function updateCoupon(id, updates) {
     updated_at: now,
   };
 
+  if (updates.status !== undefined && updates.is_active === undefined) {
+    payload.is_active = String(updates.status).toLowerCase() === 'active';
+  } else if (updates.is_active !== undefined && updates.status === undefined) {
+    payload.status = updates.is_active ? 'Active' : 'Inactive';
+  }
+
   if (payload.code) {
     payload.code = String(payload.code).trim().toUpperCase();
 
@@ -516,7 +549,12 @@ export async function updateCoupon(id, updates) {
             delete sanitized.status;
             continue;
           }
+          if (missingCol === 'is_active' && sanitized.is_active !== undefined) {
+            delete sanitized.is_active;
+            continue;
+          }
           if (missingCol === 'start_date') {
+            sanitized.starts_at = sanitized.start_date;
             delete sanitized.start_date;
             continue;
           }
@@ -532,8 +570,13 @@ export async function updateCoupon(id, updates) {
             continue;
           }
           if (missingCol === 'expiry_date' && sanitized.expiry_date !== undefined) {
-            sanitized.end_date = sanitized.expiry_date;
+            sanitized.expires_at = sanitized.expiry_date;
             delete sanitized.expiry_date;
+            continue;
+          }
+          if (missingCol === 'end_date' && sanitized.end_date !== undefined) {
+            sanitized.expires_at = sanitized.end_date;
+            delete sanitized.end_date;
             continue;
           }
           if (missingCol === 'usage_limit' && sanitized.usage_limit !== undefined) {
@@ -542,7 +585,7 @@ export async function updateCoupon(id, updates) {
             continue;
           }
           if (missingCol === 'usage_count' && sanitized.usage_count !== undefined) {
-            sanitized.times_used = sanitized.usage_count;
+            sanitized.used_count = sanitized.usage_count;
             delete sanitized.usage_count;
             continue;
           }
@@ -572,56 +615,161 @@ export async function updateCoupon(id, updates) {
     };
   }
 
-  return normalizeCoupon(updateResult);
+  const normalized = normalizeCoupon(updateResult);
+
+  // Synchronize local cache and notify subscribers
+  try {
+    const cachedList = supabaseDataService.getCachedData('coupons', []);
+    if (Array.isArray(cachedList) && cachedList.length > 0 && cachedList.some(c => String(c.id) === String(id))) {
+      const updatedList = cachedList.map(c => String(c.id) === String(id) ? { ...c, ...normalized } : c);
+      if (typeof supabaseDataService.saveToStorage === 'function') {
+        supabaseDataService.saveToStorage('coupons', updatedList);
+      }
+      supabaseDataService.notifySubscribers('coupons', updatedList);
+    }
+  } catch (_) {}
+
+  return normalized;
 }
 
 /**
  * Toggle coupon status between 'Active' and 'Inactive'
- * Directly updates Supabase and re-fetches to confirm the change.
+ * Directly updates Supabase (is_active / status) and syncs cache & subscribers.
  */
 export async function toggleCouponStatus(id, currentStatus) {
   if (!id) throw new Error('Coupon ID is required.');
 
-  const newStatus = String(currentStatus).toLowerCase() === 'active' ? 'Inactive' : 'Active';
+  // Determine current active boolean state
+  let isCurrentlyActive = false;
+  if (typeof currentStatus === 'boolean') {
+    isCurrentlyActive = currentStatus;
+  } else if (typeof currentStatus === 'string') {
+    isCurrentlyActive = currentStatus.trim().toLowerCase() === 'active';
+  } else if (currentStatus && typeof currentStatus === 'object') {
+    if (typeof currentStatus.is_active === 'boolean') {
+      isCurrentlyActive = currentStatus.is_active;
+    } else {
+      isCurrentlyActive = String(currentStatus.raw_status || currentStatus.status || '').toLowerCase() === 'active';
+    }
+  }
+
+  const nextIsActive = !isCurrentlyActive;
+  const nextStatus = nextIsActive ? 'Active' : 'Inactive';
   const now = new Date().toISOString();
 
-  // Try primary client first
-  let res = await supabase
-    .from('coupons')
-    .update({ status: newStatus, updated_at: now })
-    .eq('id', id)
-    .select();
+  let updateResult = null;
+  let lastError = null;
 
-  // Fallback to admin client
-  if (res.error || !res.data || res.data.length === 0) {
-    const adminRes = await supabaseAdmin
+  // 1. First attempt: Direct update on Supabase coupons table with `is_active`
+  try {
+    const res = await supabase
       .from('coupons')
-      .update({ status: newStatus, updated_at: now })
+      .update({ is_active: nextIsActive, updated_at: now })
       .eq('id', id)
       .select();
 
-    if (!adminRes.error && adminRes.data && adminRes.data.length > 0) {
-      return normalizeCoupon(adminRes.data[0]);
-    }
+    if (!res.error && Array.isArray(res.data) && res.data.length > 0) {
+      updateResult = res.data[0];
+    } else if (res.error) {
+      lastError = res.error;
+      // If error indicates is_active column doesn't exist, try status column
+      if (res.error.code === 'PGRST204' || res.error.message?.includes('is_active')) {
+        const statusRes = await supabase
+          .from('coupons')
+          .update({ status: nextStatus, updated_at: now })
+          .eq('id', id)
+          .select();
 
-    // If update returned no rows (RLS returning=minimal), do a fresh fetch
-    const fetchRes = await supabase.from('coupons').select('*').eq('id', id).single();
-    if (!fetchRes.error && fetchRes.data) {
-      return normalizeCoupon(fetchRes.data);
+        if (!statusRes.error && Array.isArray(statusRes.data) && statusRes.data.length > 0) {
+          updateResult = statusRes.data[0];
+          lastError = null;
+        } else if (statusRes.error) {
+          lastError = statusRes.error;
+        }
+      }
     }
-
-    const fetchAdmin = await supabaseAdmin.from('coupons').select('*').eq('id', id).single();
-    if (!fetchAdmin.error && fetchAdmin.data) {
-      return normalizeCoupon(fetchAdmin.data);
-    }
-
-    // If all Supabase attempts fail, throw with a clear message
-    throw new Error(
-      res.error?.message || adminRes.error?.message || 'Failed to update coupon status in Supabase.'
-    );
+  } catch (err) {
+    lastError = err;
+    console.warn('[couponService] toggleCouponStatus client notice:', err);
   }
 
-  return normalizeCoupon(res.data[0]);
+  // 2. Second attempt: Try supabaseAdmin client if primary client had permissions/RLS error
+  if (!updateResult) {
+    try {
+      const adminRes = await supabaseAdmin
+        .from('coupons')
+        .update({ is_active: nextIsActive, updated_at: now })
+        .eq('id', id)
+        .select();
+
+      if (!adminRes.error && Array.isArray(adminRes.data) && adminRes.data.length > 0) {
+        updateResult = adminRes.data[0];
+        lastError = null;
+      } else if (adminRes.error && (adminRes.error.code === 'PGRST204' || adminRes.error.message?.includes('is_active'))) {
+        const altAdmin = await supabaseAdmin
+          .from('coupons')
+          .update({ status: nextStatus, updated_at: now })
+          .eq('id', id)
+          .select();
+
+        if (!altAdmin.error && Array.isArray(altAdmin.data) && altAdmin.data.length > 0) {
+          updateResult = altAdmin.data[0];
+          lastError = null;
+        } else if (altAdmin.error) {
+          lastError = altAdmin.error;
+        }
+      } else if (adminRes.error) {
+        lastError = adminRes.error;
+      }
+    } catch (adminErr) {
+      console.warn('[couponService] toggleCouponStatus admin client notice:', adminErr);
+    }
+  }
+
+  // 3. Fallback via supabaseDataService if table update couldn't select
+  if (!updateResult) {
+    try {
+      updateResult = await supabaseDataService.updateItem('coupons', id, {
+        is_active: nextIsActive,
+        status: nextStatus,
+        updated_at: now
+      });
+    } catch (_) {}
+  }
+
+  // If both direct and admin failed with real database error and no result was obtained:
+  if (!updateResult && lastError && lastError.code !== 'PGRST205') {
+    throw new Error(lastError.message || 'Failed to update coupon status in Supabase.');
+  }
+
+  // Ensure normalized object with explicit updated fields
+  const normalized = normalizeCoupon(
+    updateResult
+      ? { ...updateResult, is_active: nextIsActive, status: nextStatus, raw_status: nextStatus }
+      : {
+          id,
+          is_active: nextIsActive,
+          status: nextStatus,
+          raw_status: nextStatus,
+          updated_at: now
+        }
+  );
+
+  // 4. Critical: Synchronize local cache and notify subscribers so context / other components reflect change immediately
+  try {
+    const cachedList = supabaseDataService.getCachedData('coupons', []);
+    if (Array.isArray(cachedList) && cachedList.length > 0 && cachedList.some(c => String(c.id) === String(id))) {
+      const updatedList = cachedList.map(c => String(c.id) === String(id) ? { ...c, ...normalized } : c);
+      if (typeof supabaseDataService.saveToStorage === 'function') {
+        supabaseDataService.saveToStorage('coupons', updatedList);
+      }
+      supabaseDataService.notifySubscribers('coupons', updatedList);
+    }
+  } catch (syncErr) {
+    console.warn('[couponService] Cache sync warning:', syncErr);
+  }
+
+  return normalized;
 }
 
 /**

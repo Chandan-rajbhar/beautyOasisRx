@@ -209,7 +209,7 @@ function sanitizeStoredInlineImages() {
         else if (key.startsWith('patient_photo_')) sanitizedCacheCollections.add('clients');
       }
     });
-  } catch (_) {}
+  } catch (_) { }
 }
 
 sanitizeStoredInlineImages();
@@ -227,6 +227,8 @@ function loadFromStorage(collection) {
           parsed = parsed.map(normalizeAppointment);
         } else if (collection === 'notifications' && Array.isArray(parsed)) {
           parsed = deduplicateNotifications(parsed);
+        } else if (collection === 'coupons' && Array.isArray(parsed)) {
+          parsed = parsed.map(normalizeCoupon);
         }
         cache[collection] = parsed;
         cacheTimestamps[collection] = Date.now() - (
@@ -235,7 +237,7 @@ function loadFromStorage(collection) {
         return parsed;
       }
     }
-  } catch (_) {}
+  } catch (_) { }
   return null;
 }
 
@@ -246,7 +248,7 @@ function saveToStorage(collection, data) {
     if (data && (Array.isArray(data) || typeof data === 'object')) {
       localStorage.setItem(`bo_cache_${collection}`, JSON.stringify(sanitizeCacheData(data)));
     }
-  } catch (_) {}
+  } catch (_) { }
 }
 
 // Notify subscribers of state changes
@@ -285,7 +287,7 @@ function invalidateCache(collection) {
     delete cache[collection];
     delete cacheTimestamps[collection];
     delete inFlightRequests[collection];
-    try { localStorage.removeItem(`bo_cache_${collection}`); } catch (_) {}
+    try { localStorage.removeItem(`bo_cache_${collection}`); } catch (_) { }
   } else {
     Object.keys(cache).forEach((k) => delete cache[k]);
     Object.keys(cacheTimestamps).forEach((k) => delete cacheTimestamps[k]);
@@ -294,35 +296,75 @@ function invalidateCache(collection) {
 }
 
 // Helper: normalize appointment objects across camelCase and snake_case schemas
-function normalizeAppointment(item) {
+function normalizeAppointment(item, clients = cache?.clients || []) {
   if (!item || typeof item !== 'object') return item;
+
+  const pId = item.patient_id || item.client_id || item.clientId;
+  const pEmail = (item.patient_email || item.client_email || item.clientEmail || '').toLowerCase().trim();
+  const pPhone = (item.patient_phone || item.client_phone || item.clientPhone || '').replace(/\D/g, '');
+
+  let matchedClient = null;
+  if (Array.isArray(clients) && clients.length > 0) {
+    if (pId) matchedClient = clients.find(c => c.id === pId);
+    if (!matchedClient && pEmail) matchedClient = clients.find(c => (c.email || '').toLowerCase().trim() === pEmail);
+    if (!matchedClient && pPhone) matchedClient = clients.find(c => (c.phone || '').replace(/\D/g, '') === pPhone);
+  }
+
+  const pName = (item.patient_name && item.patient_name !== 'Patient') ? item.patient_name
+    : (item.client_name && item.client_name !== 'Patient') ? item.client_name
+    : (item.clientName && item.clientName !== 'Patient') ? item.clientName
+    : matchedClient?.full_name || matchedClient?.name || item.patient_name || item.client_name || item.clientName || 'Patient';
+
+  const finalEmail = item.patient_email || item.client_email || item.clientEmail || matchedClient?.email || '';
+  const finalPhone = item.patient_phone || item.client_phone || item.clientPhone || matchedClient?.phone || '';
+
+  let matchedService = null;
+  const sId = item.treatment_protocol_id || item.service_id || item.serviceId;
+  if (sId && Array.isArray(cache?.services) && cache.services.length > 0) {
+    matchedService = cache.services.find(s => s.id === sId);
+  }
+  const sName = (item.protocol_title && item.protocol_title !== 'Treatment Protocol') ? item.protocol_title
+    : (item.service_name && item.service_name !== 'Treatment Protocol') ? item.service_name
+    : (item.serviceName && item.serviceName !== 'Treatment Protocol') ? item.serviceName
+    : matchedService?.protocol_title || matchedService?.name || item.protocol_title || item.service_name || item.serviceName || 'Treatment Protocol';
+
+  let matchedProvider = null;
+  const provId = item.clinician_id || item.provider_id || item.providerId;
+  if (provId && Array.isArray(cache?.providers) && cache.providers.length > 0) {
+    matchedProvider = cache.providers.find(p => p.id === provId);
+  }
+  const provName = (item.clinician_name && item.clinician_name !== 'Clinician') ? item.clinician_name
+    : (item.provider_name && item.provider_name !== 'Clinician') ? item.provider_name
+    : (item.providerName && item.providerName !== 'Clinician') ? item.providerName
+    : matchedProvider?.clinician_name || matchedProvider?.name || item.clinician_name || item.provider_name || item.providerName || 'Clinician';
+
   return {
     ...item,
     id: item.id,
-    patient_id: item.patient_id || item.client_id || item.clientId,
-    client_id: item.client_id || item.patient_id || item.clientId,
-    clientId: item.clientId || item.client_id || item.patient_id,
-    patient_name: item.patient_name || item.client_name || item.clientName || 'Patient',
-    client_name: item.client_name || item.patient_name || item.clientName || 'Patient',
-    clientName: item.clientName || item.client_name || item.patient_name || 'Patient',
-    patient_email: item.patient_email || item.client_email || item.clientEmail || '',
-    client_email: item.client_email || item.patient_email || item.clientEmail || '',
-    clientEmail: item.clientEmail || item.client_email || item.patient_email || '',
-    patient_phone: item.patient_phone || item.client_phone || item.clientPhone || '',
-    client_phone: item.client_phone || item.patient_phone || item.clientPhone || '',
-    clientPhone: item.clientPhone || item.client_phone || item.patient_phone || '',
-    treatment_protocol_id: item.treatment_protocol_id || item.service_id || item.serviceId,
-    service_id: item.service_id || item.treatment_protocol_id || item.serviceId,
-    serviceId: item.serviceId || item.service_id || item.treatment_protocol_id,
-    protocol_title: item.protocol_title || item.service_name || item.serviceName || 'Treatment Protocol',
-    service_name: item.service_name || item.protocol_title || item.serviceName || 'Treatment Protocol',
-    serviceName: item.serviceName || item.service_name || item.protocol_title || 'Treatment Protocol',
-    clinician_id: item.clinician_id || item.provider_id || item.providerId,
-    provider_id: item.provider_id || item.clinician_id || item.providerId,
-    providerId: item.providerId || item.provider_id || item.clinician_id,
-    clinician_name: item.clinician_name || item.provider_name || item.providerName || 'Clinician',
-    provider_name: item.provider_name || item.clinician_name || item.providerName || 'Clinician',
-    providerName: item.providerName || item.provider_name || item.clinician_name || 'Clinician',
+    patient_id: pId || matchedClient?.id,
+    client_id: pId || matchedClient?.id,
+    clientId: pId || matchedClient?.id,
+    patient_name: pName,
+    client_name: pName,
+    clientName: pName,
+    patient_email: finalEmail,
+    client_email: finalEmail,
+    clientEmail: finalEmail,
+    patient_phone: finalPhone,
+    client_phone: finalPhone,
+    clientPhone: finalPhone,
+    treatment_protocol_id: sId || matchedService?.id,
+    service_id: sId || matchedService?.id,
+    serviceId: sId || matchedService?.id,
+    protocol_title: sName,
+    service_name: sName,
+    serviceName: sName,
+    clinician_id: provId || matchedProvider?.id,
+    provider_id: provId || matchedProvider?.id,
+    providerId: provId || matchedProvider?.id,
+    clinician_name: provName,
+    provider_name: provName,
+    providerName: provName,
     appointment_date: item.appointment_date || item.date || '',
     date: item.date || item.appointment_date || '',
     appointment_time: item.appointment_time || item.time || '',
@@ -621,7 +663,7 @@ async function fetchAll(collection, options = {}) {
               apptRows = fallbackRes.data;
             }
           }
-        } catch (_) {}
+        } catch (_) { }
 
         if (!apptRows) {
           try {
@@ -634,11 +676,11 @@ async function fetchAll(collection, options = {}) {
                 apptRows = plainAdminRes.data;
               }
             }
-          } catch (_) {}
+          } catch (_) { }
         }
 
         if (apptRows) {
-          data = apptRows.map(normalizeAppointment);
+          data = apptRows.map((a) => normalizeAppointment(a, cache?.clients || []));
         } else {
           error = new Error('Could not fetch appointments from Supabase');
         }
@@ -781,7 +823,26 @@ async function createItem(collection, item) {
   const table = TABLE_MAP[collection];
   if (!table) return null;
 
-  const { id, ...rest } = item;
+  if (item && item._skipDbInsert && item.id) {
+    const { _skipDbInsert, ...cleanItem } = item;
+    const normalized = collection === 'appointments'
+      ? normalizeAppointment(cleanItem, cache?.clients || [])
+      : collection === 'payments'
+        ? normalizePayment(cleanItem, cache.clients || [])
+        : collection === 'inquiries'
+          ? normalizeInquiry(cleanItem)
+          : collection === 'coupons'
+            ? normalizeCoupon(cleanItem)
+            : cleanItem;
+    const currentList = Array.isArray(cache[collection]) ? cache[collection] : [];
+    const updatedList = [normalized, ...currentList.filter((x) => x.id !== normalized.id)];
+    cache[collection] = updatedList;
+    notifySubscribers(collection, updatedList);
+    saveToStorage(collection, updatedList);
+    return normalized;
+  }
+
+  const { id, _skipDbInsert, ...rest } = item;
   let payload = collection === 'appointments'
     ? { ...sanitizeAppointmentsPayload(rest), updated_at: new Date().toISOString() }
     : collection === 'payments'
@@ -823,7 +884,7 @@ async function createItem(collection, item) {
           insertResult = adminRes.data;
           break;
         }
-      } catch (_) {}
+      } catch (_) { }
       console.warn(`Supabase network issue on create [${collection}]:`, netErr?.message || netErr);
       break;
     }
@@ -838,17 +899,21 @@ async function createItem(collection, item) {
     };
   }
 
+  const mergedItem = { ...item, ...(insertResult || {}) };
+  delete mergedItem._skipDbInsert;
+
   const normalized = collection === 'appointments'
-    ? normalizeAppointment(insertResult)
+    ? normalizeAppointment(mergedItem, cache?.clients || [])
     : collection === 'payments'
-      ? normalizePayment(insertResult, cache.clients || [])
+      ? normalizePayment(mergedItem, cache.clients || [])
       : collection === 'inquiries'
-        ? normalizeInquiry(insertResult)
+        ? normalizeInquiry(mergedItem)
         : collection === 'coupons'
-          ? normalizeCoupon(insertResult)
-          : insertResult;
+          ? normalizeCoupon(mergedItem)
+          : mergedItem;
   const currentList = Array.isArray(cache[collection]) ? cache[collection] : [];
   const updatedList = [normalized, ...currentList.filter((x) => x.id !== normalized.id)];
+  cache[collection] = updatedList;
   notifySubscribers(collection, updatedList);
   saveToStorage(collection, updatedList);
 
@@ -918,7 +983,7 @@ async function updateItem(collection, id, updates) {
           updateResult = adminRes.data[0];
           break;
         }
-      } catch (_) {}
+      } catch (_) { }
       console.warn(`Supabase network issue on update [${collection}]:`, netErr?.message || netErr);
       break;
     }
@@ -973,7 +1038,7 @@ async function deleteItem(collection, id) {
       if (!adminRes.error) {
         delError = null;
       }
-    } catch (_) {}
+    } catch (_) { }
   }
 
   if (delError && delError.code !== '22P02') {
@@ -1002,7 +1067,7 @@ function subscribe(collection, callback) {
   if (cached !== null && cached !== undefined) {
     try {
       callback(cached);
-    } catch (_) {}
+    } catch (_) { }
   }
 
   // Return unsubscribe function
@@ -1019,7 +1084,7 @@ function subscribe(collection, callback) {
 async function markNotificationRead(id) {
   try {
     await notificationService.markAsRead(id);
-  } catch (_) {}
+  } catch (_) { }
   const current = Array.isArray(cache.notifications) ? cache.notifications : [];
   const updated = current.map((n) => (n.id === id ? { ...n, is_read: true, read: true } : n));
   cache.notifications = updated;
@@ -1030,7 +1095,7 @@ async function markNotificationRead(id) {
 async function markAllNotificationsRead() {
   try {
     await notificationService.markAllAsRead();
-  } catch (_) {}
+  } catch (_) { }
   const current = Array.isArray(cache.notifications) ? cache.notifications : [];
   const updated = current.map((n) => ({ ...n, is_read: true, read: true }));
   cache.notifications = updated;
@@ -1079,7 +1144,7 @@ function enableRealtime(collections = ['appointments', 'clients', 'orders', 'pay
     if (activeRealtimeChannels[collection]) {
       try {
         supabase.removeChannel(activeRealtimeChannels[collection]);
-      } catch (_) {}
+      } catch (_) { }
       delete activeRealtimeChannels[collection];
     }
 
@@ -1137,7 +1202,7 @@ function enableRealtime(collections = ['appointments', 'clients', 'orders', 'pay
         .subscribe();
 
       activeRealtimeChannels[collection] = channel;
-    } catch (_) {}
+    } catch (_) { }
   });
 }
 
@@ -1165,6 +1230,7 @@ export const supabaseDataService = {
   deleteItem,
   subscribe,
   notifySubscribers,
+  saveToStorage,
   markNotificationRead,
   markAllNotificationsRead,
   updateWebsiteSection,

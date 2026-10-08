@@ -70,6 +70,7 @@ export const ClientsPage = () => {
   });
   const [error, setError] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const isSubmittingRef = useRef(false);
   const [modalError, setModalError] = useState(null);
 
   // Search & Filter State
@@ -679,7 +680,7 @@ export const ClientsPage = () => {
     if (e && typeof e.preventDefault === 'function') {
       e.preventDefault();
     }
-    if (isSubmitting) return;
+    if (isSubmittingRef.current || isSubmitting) return;
 
     // Form Validation
     const trimmedName = formData.name?.trim();
@@ -733,6 +734,7 @@ export const ClientsPage = () => {
       }
     }
 
+    isSubmittingRef.current = true;
     setIsSubmitting(true);
     setModalError(null);
 
@@ -793,6 +795,21 @@ export const ClientsPage = () => {
         // 1. UPDATE EXISTING PATIENT (Strictly by Unique Patient ID)
         if (!editClient.id) {
           throw new Error('Patient unique identifier is missing. Cannot update record.');
+        }
+
+        // Check if updating email conflicts with another patient
+        if (trimmedEmail.toLowerCase() !== (editClient.email || '').toLowerCase()) {
+          const emailTaken = (patients || []).some(
+            (p) => p.id !== editClient.id && (p.email || '').trim().toLowerCase() === trimmedEmail.toLowerCase()
+          );
+          if (emailTaken) {
+            const msg = "This email address is already in use by another patient.";
+            setModalError(msg);
+            toast.error(msg);
+            isSubmittingRef.current = false;
+            setIsSubmitting(false);
+            return;
+          }
         }
 
         const baseUpdatePayload = {
@@ -900,7 +917,7 @@ export const ClientsPage = () => {
               email: trimmedEmail,
               phone: trimmedPhone,
               status: currentStatus
-            }).catch(() => {});
+            }).catch(() => { });
           }
         } catch (_) { }
 
@@ -930,81 +947,149 @@ export const ClientsPage = () => {
         toast.success(`Patient profile for "${trimmedName}" updated successfully${pwdNotice}.`);
       } else {
         // 2. INSERT NEW PATIENT
-        // Duplicate check across patients and users regardless of role
-        let duplicateFound = false;
-        try {
-          const { data: rpcData } = await supabase.rpc('check_email_exists', { lookup_email: trimmedEmail.toLowerCase() });
-          if (rpcData?.exists) duplicateFound = true;
-        } catch {
-          // fallback
-        }
-        if (!duplicateFound) {
-          const [patCheck, usrCheck] = await Promise.all([
-            supabase.from('patients').select('id').ilike('email', trimmedEmail).maybeSingle(),
-            supabase.from('users').select('id').ilike('email', trimmedEmail).maybeSingle(),
-          ]);
-          if (patCheck.data?.id || usrCheck.data?.id) duplicateFound = true;
+        // Check if patient already exists in the patients registry (memory or database)
+        const normalizedTargetEmail = trimmedEmail.toLowerCase().trim();
+        let existingPatient = (patients || []).find(
+          (p) => (p.email || '').toLowerCase().trim() === normalizedTargetEmail
+        );
+
+        if (!existingPatient) {
+          try {
+            const { data: foundPatients } = await supabase
+              .from('patients')
+              .select('*')
+              .ilike('email', trimmedEmail)
+              .limit(1);
+            if (foundPatients && foundPatients.length > 0) {
+              existingPatient = foundPatients[0];
+            }
+          } catch (_) { }
         }
 
-        if (duplicateFound) {
-          const msg = "This email address is already registered.";
+        // If patient already exists in the registry, seamlessly update their clinical details
+        if (existingPatient && existingPatient.id) {
+          const baseUpdatePayload = {
+            full_name: trimmedName,
+            name: trimmedName,
+            email: trimmedEmail,
+            phone: trimmedPhone,
+            date_of_birth: formattedDob,
+            dob: formattedDob,
+            residential_address: trimmedAddress,
+            status: currentStatus,
+            role: 'Patient',
+            updated_at: now
+          };
+          if (targetPhotoUrl !== undefined) {
+            baseUpdatePayload.profile_photo_url = targetPhotoUrl;
+            baseUpdatePayload.avatar = targetPhotoUrl;
+          }
+          if (knownColumnsRef.current?.has('address')) {
+            baseUpdatePayload.address = trimmedAddress;
+          }
+          if (knownColumnsRef.current?.has('account_status')) {
+            baseUpdatePayload.account_status = currentStatus;
+          }
+          const updatePayload = filterPayloadByKnownColumns(baseUpdatePayload);
+          await updatePatientInDatabase(existingPatient.id, updatePayload);
+
+          if (formData.password) {
+            try {
+              await supabase.rpc('admin_update_patient_password', {
+                target_email: trimmedEmail,
+                new_password: formData.password
+              });
+            } catch (_) { }
+          }
+
+          setIsAddModalOpen(false);
+          setEditClient(null);
+          setModalError(null);
+          setSelectedFile(null);
+          setPreviewPhotoUrl(null);
+          setShowPassword(false);
+          setShowConfirmPassword(false);
+          toast.success(`Patient profile for "${trimmedName}" updated successfully in the registry.`);
+          await fetchPatients();
+          return;
+        }
+
+        // Check if this email is an administrator account
+        let isAdminEmail = false;
+        try {
+          const { data: adminCheck } = await supabase
+            .from('users')
+            .select('id, email, role')
+            .ilike('email', trimmedEmail)
+            .eq('role', 'super_admin')
+            .limit(1);
+          if (adminCheck && adminCheck.length > 0) {
+            isAdminEmail = true;
+          }
+        } catch (_) { }
+
+        if (isAdminEmail) {
+          const msg = "This email address is registered as an administrator account. Please use a different email address.";
           setModalError(msg);
           toast.error(msg);
+          isSubmittingRef.current = false;
           setIsSubmitting(false);
           return;
         }
+
+        // Clean any stale non-admin user row to prevent trigger conflict
+        try {
+          await supabase.from('users').delete().ilike('email', trimmedEmail).neq('role', 'super_admin');
+          await supabaseAdmin.from('users').delete().ilike('email', trimmedEmail).neq('role', 'super_admin');
+        } catch (_) { }
 
         let signUpData = null;
 
         // Create Supabase Auth user so patient can log in
         if (formData.password) {
-          const { data, error: signUpErr } = await supabaseAdmin.auth.signUp({
-            email: trimmedEmail,
-            password: formData.password,
-            options: {
-              data: {
-                name: trimmedName,
-                full_name: trimmedName,
-                role: 'patient'
+          try {
+            const { data, error: signUpErr } = await supabaseAdmin.auth.signUp({
+              email: trimmedEmail,
+              password: formData.password,
+              options: {
+                data: {
+                  name: trimmedName,
+                  full_name: trimmedName,
+                  role: 'patient'
+                }
               }
+            });
+            signUpData = data;
+
+            // If user already existed in auth, update password so the entered password works
+            if (signUpErr || (data?.user && Array.isArray(data.user.identities) && data.user.identities.length === 0)) {
+              try {
+                await supabase.rpc('admin_update_patient_password', {
+                  target_email: trimmedEmail,
+                  new_password: formData.password
+                });
+              } catch (_) { }
             }
-          });
-          signUpData = data;
-
-          if (signUpErr) {
-            const message = signUpErr.message || 'Unable to create the patient login.';
-            const normalizedMessage = message.toLowerCase();
-            const isDuplicate = normalizedMessage.includes('already registered') ||
-              normalizedMessage.includes('already exists');
-            const userMessage = isDuplicate
-              ? 'This email address is already registered.'
-              : normalizedMessage.includes('email') && (normalizedMessage.includes('invalid') || normalizedMessage.includes('format'))
-                ? 'Please enter a valid email address.'
-                : normalizedMessage.includes('failed to fetch') || signUpErr.name === 'TypeError'
-                  ? 'Could not reach Supabase to create the patient login. Check your connection and try again.'
-                  : message;
-            setModalError(userMessage);
-            toast.error(userMessage);
-            return;
+          } catch (authErr) {
+            console.warn('Auth registration notice:', authErr);
           }
 
-          if (!signUpData?.user?.id) {
-            const msg = 'Supabase did not return a patient account. Please try again.';
-            setModalError(msg);
-            toast.error(msg);
-            return;
-          }
-
-          if (signUpData?.user && Array.isArray(signUpData.user.identities) && signUpData.user.identities.length === 0) {
-            const msg = "This email address is already registered.";
-            setModalError(msg);
-            toast.error(msg);
-            return;
-          }
+          // Purge any entry automatically inserted into public.users by an auth trigger.
+          // Because patients are stored ONLY in the public.patients table.
+          // If not deleted here, trigger trg_check_patient_email_not_in_users will reject the insert!
+          try {
+            await supabase.from('users').delete().ilike('email', trimmedEmail).neq('role', 'super_admin');
+            await supabaseAdmin.from('users').delete().ilike('email', trimmedEmail).neq('role', 'super_admin');
+            if (signUpData?.user?.id) {
+              await supabase.from('users').delete().eq('id', signUpData.user.id).neq('role', 'super_admin');
+              await supabaseAdmin.from('users').delete().eq('id', signUpData.user.id).neq('role', 'super_admin');
+            }
+          } catch (_) { }
         }
 
         let insertSuccess = false;
         let insertErr = null;
+        let insertedRecord = null;
 
         const baseInsertPayload = {
           full_name: trimmedName,
@@ -1055,6 +1140,7 @@ export const ClientsPage = () => {
           if (!res.error) {
             insertSuccess = true;
             insertErr = null;
+            insertedRecord = (res.data && res.data[0]) ? res.data[0] : null;
             knownColumnsRef.current = new Set(Object.keys(currentInsertPayload));
             console.log('[Supabase Insert] Successfully stored patient record.');
             break;
@@ -1062,6 +1148,17 @@ export const ClientsPage = () => {
 
           insertErr = res.error;
           console.warn(`[Supabase Insert] Attempt ${attempt + 1} rejected:`, insertErr);
+
+          // If unique email constraint, break to handle via update
+          const isUniqueViolation =
+            insertErr.code === '23505' ||
+            insertErr.message?.includes('idx_patients_unique_lower_email') ||
+            insertErr.message?.toLowerCase().includes('unique constraint') ||
+            insertErr.message?.toLowerCase().includes('duplicate key');
+
+          if (isUniqueViolation) {
+            break;
+          }
 
           // Extract exact missing column name from PostgREST PGRST204 error message
           const match =
@@ -1071,7 +1168,6 @@ export const ClientsPage = () => {
 
           if (match && match[1]) {
             const missingCol = match[1];
-            console.log(`[Auto-Healing Insert] Removing missing column '${missingCol}' and retrying...`);
             delete currentInsertPayload[missingCol];
             if (knownColumnsRef.current) knownColumnsRef.current.delete(missingCol);
             continue;
@@ -1082,7 +1178,6 @@ export const ClientsPage = () => {
             const optionalCols = ['avatar', 'profilePhotoUrl', 'profile_photo_url', 'total_appointments', 'total_spent', 'last_visit', 'role', 'residential_address', 'account_status', 'date_of_birth', 'created_at', 'updated_at'];
             const found = optionalCols.find(col => col in currentInsertPayload);
             if (found) {
-              console.log(`[Auto-Healing Insert] Stripping fallback column '${found}' and retrying...`);
               delete currentInsertPayload[found];
               continue;
             }
@@ -1091,8 +1186,31 @@ export const ClientsPage = () => {
           break;
         }
 
+        // If unique constraint was triggered, update existing patient record seamlessly
+        const isInsertUniqueViolation =
+          insertErr?.code === '23505' ||
+          insertErr?.message?.includes('idx_patients_unique_lower_email') ||
+          insertErr?.message?.toLowerCase().includes('unique constraint') ||
+          insertErr?.message?.toLowerCase().includes('duplicate key');
+
+        if (!insertSuccess && isInsertUniqueViolation) {
+          try {
+            const { data: existingConf } = await supabase
+              .from('patients')
+              .select('id')
+              .ilike('email', trimmedEmail)
+              .limit(1);
+            if (existingConf && existingConf[0]?.id) {
+              await updatePatientInDatabase(existingConf[0].id, currentInsertPayload);
+              insertSuccess = true;
+              insertErr = null;
+              insertedRecord = existingConf[0];
+            }
+          } catch (_) { }
+        }
+
         // Secondary fallback: if full_name candidate failed completely, try legacy name/dob/address schema
-        if (!insertSuccess && insertErr) {
+        if (!insertSuccess && insertErr && !isInsertUniqueViolation) {
           console.warn('[Supabase Insert] Attempting candidate with name/dob/address schema...');
           const legacyPayload = {
             name: trimmedName,
@@ -1124,6 +1242,7 @@ export const ClientsPage = () => {
             if (!res.error) {
               insertSuccess = true;
               insertErr = null;
+              insertedRecord = (res.data && res.data[0]) ? res.data[0] : null;
               knownColumnsRef.current = new Set(Object.keys(legacyPayload));
               console.log('[Supabase Insert] Legacy schema candidate succeeded.');
               break;
@@ -1138,24 +1257,26 @@ export const ClientsPage = () => {
           }
         }
 
-        if (insertErr || !insertSuccess) {
+        if (insertErr && !insertSuccess) {
           throw insertErr || new Error('Failed to create patient record in Supabase database.');
         }
 
-        // Patients are stored ONLY in the patients table.
-        // No entry is created in the users table for patient records.
-        // Purge any entry that might have been automatically created in users by an auth trigger.
+        // Purge any orphan user entry
         try {
-          await supabase.from('users').delete().eq('email', trimmedEmail);
+          await supabase.from('users').delete().ilike('email', trimmedEmail).neq('role', 'super_admin');
+          await supabaseAdmin.from('users').delete().ilike('email', trimmedEmail).neq('role', 'super_admin');
           if (signUpData?.user?.id) {
-            await supabase.from('users').delete().eq('id', signUpData.user.id);
+            await supabase.from('users').delete().eq('id', signUpData.user.id).neq('role', 'super_admin');
+            await supabaseAdmin.from('users').delete().eq('id', signUpData.user.id).neq('role', 'super_admin');
           }
         } catch (_) { }
 
         // Refresh global data service cache if present
         try {
+          supabaseDataService.invalidateCache('clients');
+          supabaseDataService.invalidateCache('patients');
           if (supabaseDataService?.fetchAll) {
-            supabaseDataService.fetchAll('patients');
+            supabaseDataService.fetchAll('patients', { forceFresh: true });
           }
         } catch (_) { }
 
@@ -1164,7 +1285,7 @@ export const ClientsPage = () => {
 
         // Create one new patient alert notification (with unique deduplication)
         try {
-          const patientId = signUpData?.user?.id || (res && res.data && res.data[0]?.id) || currentInsertPayload?.id;
+          const patientId = signUpData?.user?.id || insertedRecord?.id || currentInsertPayload?.id;
           if (patientId) {
             notificationService.createNotification({
               title: 'New Patient Registration',
@@ -1177,7 +1298,7 @@ export const ClientsPage = () => {
             });
             supabaseDataService.fetchAll('notifications', { forceFresh: true });
           }
-        } catch (_) {}
+        } catch (_) { }
 
         // Close registration modal & reset inputs
         setIsAddModalOpen(false);
@@ -1194,7 +1315,17 @@ export const ClientsPage = () => {
     } catch (err) {
       console.error('Error saving patient to Supabase:', err);
       let errorMsg = err.message || 'Failed to save patient. Please check your Supabase connection and table permissions.';
-      if (err.code === '42P01' || err.message?.includes('relation "public.patients" does not exist') || (err.message?.includes('patients') && err.message?.includes('does not exist'))) {
+      const isUniqueEmailViolation =
+        err.code === '23505' ||
+        err.message?.includes('idx_patients_unique_lower_email') ||
+        err.message?.toLowerCase().includes('unique constraint') ||
+        err.message?.toLowerCase().includes('duplicate key') ||
+        err.message?.toLowerCase().includes('already exists') ||
+        err.message?.toLowerCase().includes('already registered');
+
+      if (isUniqueEmailViolation) {
+        errorMsg = 'This email address is already registered. Please use a different email address or search existing patients.';
+      } else if (err.code === '42P01' || err.message?.includes('relation "public.patients" does not exist') || (err.message?.includes('patients') && err.message?.includes('does not exist'))) {
         errorMsg = 'The "patients" table is not found in your Supabase database. Please run the SQL in "create_patients_table.sql" in your Supabase SQL Editor.';
       } else if (err.code === '42501' || err.message?.includes('row-level security')) {
         errorMsg = 'Supabase Row Level Security (RLS) blocked the insert. Please run section 4 & 5 of "create_patients_table.sql" in your Supabase SQL Editor.';
@@ -1202,6 +1333,7 @@ export const ClientsPage = () => {
       setModalError(errorMsg);
       toast.error(errorMsg);
     } finally {
+      isSubmittingRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -1260,7 +1392,7 @@ export const ClientsPage = () => {
       supabaseDataService.invalidateCache('clients');
       supabaseDataService.invalidateCache('patients');
       if (supabaseDataService?.updateItem) {
-        supabaseDataService.updateItem('clients', patientId, { status: nextStatus }).catch(() => {});
+        supabaseDataService.updateItem('clients', patientId, { status: nextStatus }).catch(() => { });
       }
     } catch (_) { }
 
@@ -1323,7 +1455,7 @@ export const ClientsPage = () => {
         supabaseDataService.invalidateCache('clients');
         supabaseDataService.invalidateCache('patients');
         if (supabaseDataService?.deleteItem) {
-          supabaseDataService.deleteItem('clients', targetId).catch(() => {});
+          supabaseDataService.deleteItem('clients', targetId).catch(() => { });
         }
       } catch (_) { }
 
@@ -1801,7 +1933,7 @@ export const ClientsPage = () => {
             onClick={handleOpenAddModal}
             icon={<Plus size={16} />}
           >
-            Register Patient
+            Register User
           </AdminButton>
         </div>
       </div>
@@ -1847,7 +1979,7 @@ export const ClientsPage = () => {
         itemLabel="patients"
         emptyTitle="No patient records found"
         emptyDescription="Try clearing your search query or register a new patient."
-        emptyActionLabel="Register Patient"
+        emptyActionLabel="Register User"
         onEmptyAction={handleOpenAddModal}
       />
 
@@ -1862,7 +1994,7 @@ export const ClientsPage = () => {
           setShowConfirmPassword(false);
           setChangePasswordOptIn(false);
         }}
-        title={editClient ? "Edit Patient Information" : "Register New Patient"}
+        title={editClient ? "Edit User Information" : "Register New User"}
         subtitle={editClient ? `Update details for registry record #${editClient.id || ''}` : "Enter clinical patient details for the registry."}
         width="560px"
         footer={
@@ -1886,9 +2018,8 @@ export const ClientsPage = () => {
               form="register-patient-form"
               variant="primary"
               disabled={isSubmitting}
-              onClick={handleSaveClient}
             >
-              {isSubmitting ? "Saving..." : editClient ? "Save Patient Profile" : "Register Patient"}
+              {isSubmitting ? "Saving..." : editClient ? "Save User Profile" : "Register User"}
             </AdminButton>
           </div>
         }
@@ -2232,7 +2363,7 @@ export const ClientsPage = () => {
               </div>
             )}
 
-            {/* 8. Password & Confirm Password (Register New Patient OR Edit Patient with Opt-in) */}
+            {/* 8. Password & Confirm Password (Register New User OR Edit Patient with Opt-in) */}
             {(!editClient || changePasswordOptIn) && (
               <>
                 {/* Password */}

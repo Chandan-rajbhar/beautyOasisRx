@@ -78,7 +78,7 @@ function parseDurationMinutes(duration) {
 
 export const AppointmentsPage = () => {
   const {
-    appointments = [],
+    appointments: contextAppointments = [],
     clients = [],
     services = [],
     providers = [],
@@ -87,6 +87,20 @@ export const AppointmentsPage = () => {
     deleteItem,
     isLoading
   } = useAdminData();
+
+  // Dynamic appointments state for instant, synchronous reflection across tabs and counts
+  const [appointments, setAppointments] = useState(() => contextAppointments);
+
+  // Synchronize with AdminDataContext updates while retaining any optimistic creations
+  useEffect(() => {
+    if (Array.isArray(contextAppointments)) {
+      setAppointments(prev => {
+        const contextIds = new Set(contextAppointments.map(a => a.id));
+        const optimisticNew = prev.filter(a => !contextIds.has(a.id));
+        return [...optimisticNew, ...contextAppointments];
+      });
+    }
+  }, [contextAppointments]);
 
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -857,6 +871,14 @@ export const AppointmentsPage = () => {
           }
         }
 
+        const updatedRecord = {
+          ...editAppointment,
+          ...appointmentPayload,
+          id: editAppointment.id,
+          updated_at: new Date().toISOString()
+        };
+        setAppointments(prev => prev.map(a => a.id === editAppointment.id ? updatedRecord : a));
+
         await updateItem('appointments', editAppointment.id, appointmentPayload);
         toast.success('Appointment protocol updated successfully.');
         setEditAppointment(null);
@@ -918,9 +940,68 @@ export const AppointmentsPage = () => {
           }
         }
 
-        await createItem('appointments', insData || appointmentPayload);
+        const newAppointment = {
+          ...appointmentPayload,
+          ...(insData || {}),
+          id: insData?.id || appointmentPayload.id || (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : 'apt-' + Date.now()),
+          clientName: formData.clientName,
+          patient_name: formData.clientName,
+          clientPhone: formData.clientPhone,
+          patient_phone: formData.clientPhone,
+          clientEmail: formData.clientEmail,
+          patient_email: formData.clientEmail,
+          serviceName: formData.serviceName,
+          protocol_title: formData.serviceName,
+          providerName: formData.providerName,
+          clinician_name: formData.providerName,
+          duration: formData.duration || '60 Mins',
+          price: formData.price ?? 0,
+          amount: formData.price ?? 0,
+          date: formData.date,
+          appointment_date: formData.date,
+          time: formData.time,
+          appointment_time: formData.time,
+          status: 'Confirmed',
+          paymentStatus: 'Pending',
+          payment_status: 'Pending',
+          patient_id: formData.clientId,
+          client_id: formData.clientId,
+          clientId: formData.clientId,
+          treatment_protocol_id: formData.serviceId,
+          service_id: formData.serviceId,
+          clinician_id: formData.providerId,
+          provider_id: formData.providerId,
+          notes: formData.notes || '',
+          created_at: insData?.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+
+        // 1. Immediately update local state so All, Upcoming, and Recent tabs & counts update dynamically without requiring a page refresh
+        setAppointments(prev => [newAppointment, ...prev.filter(a => a.id !== newAppointment.id)]);
+
+        // 2. Persist to context and Supabase Data Service
+        await createItem('appointments', {
+          ...newAppointment,
+          _skipDbInsert: Boolean(insData)
+        });
+
         toast.success('New clinical appointment scheduled successfully.');
         setIsAddDrawerOpen(false);
+        setFormData({
+          clientId: '',
+          clientName: '',
+          clientEmail: '',
+          clientPhone: '',
+          serviceId: '',
+          serviceName: '',
+          providerId: '',
+          providerName: '',
+          date: new Date().toLocaleDateString('en-CA'),
+          time: '10:00 AM',
+          duration: '60 Mins',
+          price: 0,
+          notes: ''
+        });
         searchParams.delete('action');
         setSearchParams(searchParams);
       }
@@ -941,6 +1022,7 @@ export const AppointmentsPage = () => {
   const handleDelete = async () => {
     if (deleteConfirmId) {
       try {
+        setAppointments(prev => prev.filter(a => a.id !== deleteConfirmId));
         let delRes = await supabase.from('appointments').delete().eq('id', deleteConfirmId);
         if (delRes.error) {
           const adminDel = await supabaseAdmin.from('appointments').delete().eq('id', deleteConfirmId);
@@ -962,6 +1044,7 @@ export const AppointmentsPage = () => {
   // Change Status handler
   const handleUpdateStatus = async (apptId, newStatus) => {
     try {
+      setAppointments(prev => prev.map(a => a.id === apptId ? { ...a, status: newStatus } : a));
       const statusPayload = {
         status: newStatus,
         updated_at: new Date().toISOString()
@@ -1100,6 +1183,39 @@ export const AppointmentsPage = () => {
   };
 
   // ─────────────────────────────────────────────────────────────
+  // PATIENT UUID RESOLVER & NAVIGATION HELPER
+  // ─────────────────────────────────────────────────────────────
+  const getPatientUUID = useCallback((row) => {
+    if (!row) return null;
+    const directId = row.patient_id || row.client_id || row.clientId;
+    if (directId && String(directId).trim() && !String(directId).startsWith('temp-')) {
+      return String(directId).trim();
+    }
+
+    const email = (row.patient_email || row.clientEmail || row.client_email || '').toLowerCase().trim();
+    const phone = (row.patient_phone || row.clientPhone || row.client_phone || '').replace(/\D/g, '');
+    const name = (row.clientName || row.patient_name || row.client_name || '').toLowerCase().trim();
+
+    if (email) {
+      const match = patientsList.find(p => (p.email || '').toLowerCase().trim() === email)
+        || clients.find(c => (c.email || '').toLowerCase().trim() === email);
+      if (match?.id) return String(match.id).trim();
+    }
+    if (phone) {
+      const match = patientsList.find(p => (p.phone || '').replace(/\D/g, '') === phone)
+        || clients.find(c => (c.phone || '').replace(/\D/g, '') === phone);
+      if (match?.id) return String(match.id).trim();
+    }
+    if (name && name !== 'patient' && name !== 'unknown') {
+      const match = patientsList.find(p => (p.full_name || p.name || '').toLowerCase().trim() === name)
+        || clients.find(c => (c.full_name || c.name || '').toLowerCase().trim() === name);
+      if (match?.id) return String(match.id).trim();
+    }
+
+    return null;
+  }, [patientsList, clients]);
+
+  // ─────────────────────────────────────────────────────────────
   // TABLE COLUMNS CONFIGURATION
   // ─────────────────────────────────────────────────────────────
   const columns = [
@@ -1107,16 +1223,58 @@ export const AppointmentsPage = () => {
       header: 'Patient / Client',
       accessor: 'clientName',
       sortable: true,
-      render: (row) => (
-        <div>
-          <div style={{ fontWeight: 600, color: '#0f2942' }}>
-            {row.clientName || row.patient_name}
+      render: (row) => {
+        const patientUUID = getPatientUUID(row);
+        const patientName = row.clientName || row.patient_name || row.client_name || 'Patient';
+        const contactInfo = row.clientPhone || row.patient_phone || row.clientEmail || row.patient_email || '';
+
+        return (
+          <div>
+            {patientUUID ? (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  navigate(`/patients/${patientUUID}`);
+                }}
+                title={`View Patient Profile: ${patientName}`}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  padding: 0,
+                  margin: 0,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  fontWeight: 600,
+                  color: '#0f2942',
+                  fontSize: 'inherit',
+                  fontFamily: 'inherit',
+                  lineHeight: 'inherit',
+                  transition: 'color 0.15s ease, text-decoration 0.15s ease',
+                  display: 'inline-block'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.color = '#1e5aa8';
+                  e.currentTarget.style.textDecoration = 'underline';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.color = '#0f2942';
+                  e.currentTarget.style.textDecoration = 'none';
+                }}
+              >
+                {patientName}
+              </button>
+            ) : (
+              <div style={{ fontWeight: 600, color: '#0f2942' }}>
+                {patientName}
+              </div>
+            )}
+            <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
+              {contactInfo}
+            </div>
           </div>
-          <div style={{ fontSize: '0.75rem', color: '#64748b' }}>
-            {row.clientPhone || row.patient_phone || row.clientEmail || row.patient_email}
-          </div>
-        </div>
-      )
+        );
+      }
     },
     {
       header: 'Service Protocol',
@@ -1870,7 +2028,46 @@ export const AppointmentsPage = () => {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '0.84rem' }}>
                 <div>
                   <span style={{ color: '#64748b', display: 'block', fontSize: '0.74rem' }}>Name</span>
-                  <span style={{ fontWeight: 600 }}>{selectedAppointment.clientName || selectedAppointment.patient_name}</span>
+                  {(() => {
+                    const patientUUID = getPatientUUID(selectedAppointment);
+                    const name = selectedAppointment.clientName || selectedAppointment.patient_name || 'Patient';
+                    return patientUUID ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectedAppointment(null);
+                          navigate(`/patients/${patientUUID}`);
+                        }}
+                        title={`View Patient Profile: ${name}`}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          padding: 0,
+                          margin: 0,
+                          cursor: 'pointer',
+                          fontWeight: 600,
+                          color: '#0f2942',
+                          textAlign: 'left',
+                          fontSize: 'inherit',
+                          fontFamily: 'inherit',
+                          display: 'inline-block',
+                          transition: 'color 0.15s ease, text-decoration 0.15s ease'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.color = '#1e5aa8';
+                          e.currentTarget.style.textDecoration = 'underline';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.color = '#0f2942';
+                          e.currentTarget.style.textDecoration = 'none';
+                        }}
+                      >
+                        {name}
+                      </button>
+                    ) : (
+                      <span style={{ fontWeight: 600 }}>{name}</span>
+                    );
+                  })()}
                 </div>
                 <div>
                   <span style={{ color: '#64748b', display: 'block', fontSize: '0.74rem' }}>Contact Phone</span>
@@ -1945,12 +2142,20 @@ export const AppointmentsPage = () => {
         onClose={() => setPayNowAppointment(null)}
         appointment={payNowAppointment}
         onPaymentSuccess={(updated) => {
-          if (updateItem && updated?.id) {
-            updateItem('appointments', updated.id, {
+          if (updated?.id) {
+            setAppointments(prev => prev.map(a => a.id === updated.id ? {
+              ...a,
               payment_status: 'Paid',
               paymentStatus: 'Paid',
               stripe_payment_intent_id: updated.stripe_payment_intent_id
-            });
+            } : a));
+            if (updateItem) {
+              updateItem('appointments', updated.id, {
+                payment_status: 'Paid',
+                paymentStatus: 'Paid',
+                stripe_payment_intent_id: updated.stripe_payment_intent_id
+              });
+            }
           }
           setPayNowAppointment(null);
         }}

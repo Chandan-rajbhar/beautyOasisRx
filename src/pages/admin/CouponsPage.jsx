@@ -119,7 +119,7 @@ export const CouponsPage = () => {
   const metrics = useMemo(() => {
     const total = coupons.length;
     const active = coupons.filter(c => String(c.status).toLowerCase() === 'active').length;
-    const totalRedemptions = coupons.reduce((sum, c) => sum + Number(c.usage_count || c.times_used || 0), 0);
+    const totalRedemptions = coupons.reduce((sum, c) => sum + Number(c.usage_count || c.used_count || c.times_used || 0), 0);
     const percentageDiscounts = coupons.filter(c => String(c.discount_type || c.type).toLowerCase() === 'percentage');
     const avgPercentage = percentageDiscounts.length > 0
       ? (percentageDiscounts.reduce((sum, c) => sum + Number(c.discount_value || 0), 0) / percentageDiscounts.length).toFixed(0)
@@ -465,18 +465,29 @@ export const CouponsPage = () => {
 
   // Toggle Active/Inactive Status — optimistic UI, Supabase confirm, revert on failure
   const handleToggleStatus = async (coupon) => {
-    const currentStatus = coupon.raw_status || coupon.status;
-    const newStatus = String(currentStatus).toLowerCase() === 'active' ? 'Inactive' : 'Active';
+    if (!coupon || !coupon.id) return;
 
-    // ── 1. Optimistic UI update (instant) ──
-    const optimistic = { ...coupon, status: newStatus, raw_status: newStatus };
+    const currentStatus = coupon.raw_status || coupon.status;
+    const isCurrentlyActive = typeof coupon.is_active === 'boolean'
+      ? coupon.is_active
+      : String(currentStatus).toLowerCase() === 'active';
+    const newStatus = isCurrentlyActive ? 'Inactive' : 'Active';
+    const newIsActive = !isCurrentlyActive;
+
+    // ── 1. Optimistic UI update (instant 0ms) ──
+    const optimistic = {
+      ...coupon,
+      is_active: newIsActive,
+      status: newStatus,
+      raw_status: newStatus
+    };
     setCoupons(prev => prev.map(c => c.id === coupon.id ? optimistic : c));
     if (viewingCoupon && viewingCoupon.id === coupon.id) setViewingCoupon(optimistic);
 
     setActionLoading(true);
     try {
       // ── 2. Persist to Supabase ──
-      const confirmed = await toggleCouponStatus(coupon.id, currentStatus);
+      const confirmed = await toggleCouponStatus(coupon.id, isCurrentlyActive ? 'Active' : 'Inactive');
       // Update with server-confirmed normalized data
       setCoupons(prev => prev.map(c => c.id === coupon.id ? confirmed : c));
       if (viewingCoupon && viewingCoupon.id === coupon.id) setViewingCoupon(confirmed);
@@ -1375,8 +1386,8 @@ export const CouponsPage = () => {
                   gap: '6px'
                 }}
               >
-                <Power size={14} color={viewingCoupon.status === 'Active' ? '#d97706' : '#16a34a'} />
-                <span>{viewingCoupon.status === 'Active' ? 'Deactivate Coupon' : 'Activate Coupon'}</span>
+                <Power size={14} color={String(viewingCoupon.raw_status || viewingCoupon.status).toLowerCase() === 'active' ? '#d97706' : '#16a34a'} />
+                <span>{String(viewingCoupon.raw_status || viewingCoupon.status).toLowerCase() === 'active' ? 'Deactivate Coupon' : 'Activate Coupon'}</span>
               </button>
 
               <div style={{ display: 'flex', gap: '8px' }}>
