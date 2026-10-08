@@ -12,11 +12,14 @@ import {
   User
 } from 'lucide-react';
 import { useAdminData } from '../../context/AdminDataContext';
+import { useAdminAuth } from '../../context/AdminAuthContext';
 import { AdminButton } from '../../components/admin/ui/AdminButton';
 import { supabase } from '../../lib/supabaseClient';
 import { supabaseDataService } from '../../services/supabaseDataService';
+import toast from 'react-hot-toast';
 import {
   notificationService,
+  resolveNotificationRoute,
   getNotificationRoute,
   formatTimestamp,
   normalizeNotification,
@@ -27,11 +30,16 @@ import {
 export const NotificationsPage = () => {
   const {
     notifications = [],
+    clients = [],
+    appointments = [],
+    orders = [],
+    payments = [],
     markNotificationAsRead,
     markAllNotificationsAsRead,
     deleteItem,
     isLoading: contextLoading
   } = useAdminData();
+  const { user: currentUser } = useAdminAuth();
 
   const navigate = useNavigate();
   const [filterType, setFilterType] = useState('ALL');
@@ -142,9 +150,23 @@ export const NotificationsPage = () => {
       }
     }
 
-    const route = getNotificationRoute(notif);
-    if (route && route.path) {
-      navigate(route.path, { state: route.state });
+    try {
+      const route = await resolveNotificationRoute(notif, {
+        clients,
+        appointments,
+        orders,
+        payments,
+        currentAdminId: currentUser?.id
+      });
+
+      if (route && route.path) {
+        navigate(route.path, { state: route.state });
+      } else {
+        toast.error(route?.error || 'Unable to locate the patient profile for this notification.');
+      }
+    } catch (err) {
+      console.error('[NotificationsPage] Patient navigation error:', err);
+      toast.error('Unable to navigate to patient profile.');
     }
   };
 

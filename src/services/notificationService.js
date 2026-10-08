@@ -184,45 +184,509 @@ export function deduplicateNotifications(list) {
 }
 
 /**
- * Dynamic route generator based on notification type and reference_id
+ * Check if a notification is related to a patient activity
  */
-export function getNotificationRoute(notif) {
-  if (!notif) return { path: '/notifications' };
+export function isPatientRelatedNotification(notif) {
+  if (!notif) return false;
+  const type = String(notif.type || notif.category || '').toLowerCase().trim();
+  const title = String(notif.title || '').toLowerCase();
+  const message = String(notif.message || '').toLowerCase();
 
-  const type = (notif.type || notif.category || '').toLowerCase();
+  if (['appointment', 'order', 'patient', 'client', 'payment'].includes(type)) return true;
+  if (notif.patient_id || notif.patientId) return true;
+  if (title.includes('appointment') || title.includes('order') || title.includes('patient') || title.includes('client') || title.includes('treatment')) return true;
+  if (message.includes('booked') || message.includes('scheduled') || message.includes('placed an order') || message.includes('registered')) return true;
+
+  return false;
+}
+
+/**
+ * Fast synchronous resolver for patient ID from notification, context data & local storage
+ */
+export function resolvePatientFromNotificationSync(notif, context = {}) {
+  if (!notif) return null;
+
+  const currentAdminId = context.currentAdminId ? String(context.currentAdminId).toLowerCase().trim() : null;
+  const isForbiddenId = (id) => {
+    if (!id) return true;
+    const clean = String(id).toLowerCase().trim();
+    if (['null', 'undefined', 'admin', 'super-admin', 'current-admin', 'guest'].includes(clean)) return true;
+    if (currentAdminId && clean === currentAdminId) return true;
+    return false;
+  };
+
+  const clients = Array.isArray(context.clients) ? context.clients : [];
+  const appointments = Array.isArray(context.appointments) ? context.appointments : [];
+  const orders = Array.isArray(context.orders) ? context.orders : [];
+  const payments = Array.isArray(context.payments) ? context.payments : [];
+
+  const findPatientInLocal = (predicate) => {
+    let match = clients.find(predicate);
+    if (!match) {
+      try {
+        const cached = localStorage.getItem('cached_dynamic_patients') || localStorage.getItem('bo_cache_clients');
+        if (cached) {
+          const list = JSON.parse(cached);
+          if (Array.isArray(list)) match = list.find(predicate);
+        }
+      } catch (_) {}
+    }
+    return match;
+  };
+
+  const rawPatId = notif.patient_id || notif.patientId;
+  const type = String(notif.type || notif.category || '').toLowerCase().trim();
   const refId = notif.reference_id || notif.referenceId;
-  const patId = notif.patient_id || notif.patientId || refId;
+  const message = String(notif.message || '').trim();
+  const title = String(notif.title || '').trim();
 
-  // New patient registration directly navigates to that patient's profile
-  if (type === 'patient' || type === 'client') {
+  // 1. Direct valid patient_id
+  if (rawPatId && !isForbiddenId(rawPatId)) {
+    const cleanPat = String(rawPatId).trim();
+    const localMatch = findPatientInLocal(p => String(p.id) === cleanPat || String(p.user_id) === cleanPat);
+    if (localMatch && !isForbiddenId(localMatch.id)) return String(localMatch.id);
+    if (/^[0-9a-fA-F-]{36}$/.test(cleanPat)) return cleanPat;
+  }
+
+  // 2. Patient / client type directly by reference_id
+  if ((type === 'patient' || type === 'client') && refId && !isForbiddenId(refId)) {
+    const cleanRef = String(refId).trim();
+    const localMatch = findPatientInLocal(p => String(p.id) === cleanRef || String(p.user_id) === cleanRef);
+    if (localMatch && !isForbiddenId(localMatch.id)) return String(localMatch.id);
+    if (/^[0-9a-fA-F-]{36}$/.test(cleanRef)) return cleanRef;
+  }
+
+  // 3. Resolve via appointments in memory/cache
+  if (type === 'appointment' || title.toLowerCase().includes('appointment') || message.toLowerCase().includes('booked')) {
+    let appt = null;
+    if (refId) {
+      appt = appointments.find(a => String(a.id) === String(refId));
+      if (!appt) {
+        try {
+          const cached = localStorage.getItem('bo_cache_appointments');
+          if (cached) {
+            const list = JSON.parse(cached);
+            if (Array.isArray(list)) appt = list.find(a => String(a.id) === String(refId));
+          }
+        } catch (_) {}
+      }
+    }
+    if (appt) {
+      const apptPatId = appt.patient_id || appt.client_id || appt.clientId;
+      if (apptPatId && !isForbiddenId(apptPatId)) {
+        const localMatch = findPatientInLocal(p => String(p.id) === String(apptPatId));
+        if (localMatch) return String(localMatch.id);
+        if (/^[0-9a-fA-F-]{36}$/.test(String(apptPatId))) return String(apptPatId);
+      }
+      const apptEmail = (appt.patient_email || appt.client_email || appt.clientEmail || appt.email || '').toLowerCase().trim();
+      if (apptEmail) {
+        const match = findPatientInLocal(p => (p.email || '').toLowerCase().trim() === apptEmail);
+        if (match && !isForbiddenId(match.id)) return String(match.id);
+      }
+      const apptPhone = (appt.patient_phone || appt.client_phone || appt.clientPhone || appt.phone || '').replace(/\D/g, '');
+      if (apptPhone && apptPhone.length >= 7) {
+        const match = findPatientInLocal(p => (p.phone || '').replace(/\D/g, '') === apptPhone);
+        if (match && !isForbiddenId(match.id)) return String(match.id);
+      }
+      const apptName = (appt.patient_name || appt.client_name || appt.clientName || '').trim();
+      if (apptName && apptName.toLowerCase() !== 'patient' && apptName.toLowerCase() !== 'client') {
+        const match = findPatientInLocal(p => (p.full_name || p.name || '').toLowerCase().trim() === apptName.toLowerCase());
+        if (match && !isForbiddenId(match.id)) return String(match.id);
+      }
+    }
+  }
+
+  // 4. Resolve via orders in memory/cache
+  if (type === 'order' || title.toLowerCase().includes('order') || message.toLowerCase().includes('order')) {
+    let order = null;
+    if (refId) {
+      order = orders.find(o => String(o.id) === String(refId) || String(o.order_number) === String(refId) || String(o.order_id) === String(refId));
+      if (!order) {
+        try {
+          const cached = localStorage.getItem('bo_cache_orders');
+          if (cached) {
+            const list = JSON.parse(cached);
+            if (Array.isArray(list)) order = list.find(o => String(o.id) === String(refId) || String(o.order_number) === String(refId) || String(o.order_id) === String(refId));
+          }
+        } catch (_) {}
+      }
+    }
+    if (order) {
+      const orderPatId = order.patient_id || order.client_id || order.clientId || order.user_id;
+      if (orderPatId && !isForbiddenId(orderPatId)) {
+        const localMatch = findPatientInLocal(p => String(p.id) === String(orderPatId));
+        if (localMatch) return String(localMatch.id);
+        if (/^[0-9a-fA-F-]{36}$/.test(String(orderPatId))) return String(orderPatId);
+      }
+      const orderEmail = (order.customer_email || order.client_email || order.clientEmail || order.email || '').toLowerCase().trim();
+      if (orderEmail) {
+        const match = findPatientInLocal(p => (p.email || '').toLowerCase().trim() === orderEmail);
+        if (match && !isForbiddenId(match.id)) return String(match.id);
+      }
+      const orderName = (order.customer_name || order.client_name || order.clientName || '').trim();
+      if (orderName && orderName.toLowerCase() !== 'client' && orderName.toLowerCase() !== 'patient') {
+        const match = findPatientInLocal(p => (p.full_name || p.name || '').toLowerCase().trim() === orderName.toLowerCase());
+        if (match && !isForbiddenId(match.id)) return String(match.id);
+      }
+    }
+  }
+
+  // 5. Resolve via payments in memory/cache
+  if (type === 'payment' || title.toLowerCase().includes('payment')) {
+    let payment = null;
+    if (refId) {
+      payment = payments.find(p => String(p.id) === String(refId));
+      if (!payment) {
+        try {
+          const cached = localStorage.getItem('bo_cache_payments');
+          if (cached) {
+            const list = JSON.parse(cached);
+            if (Array.isArray(list)) payment = list.find(p => String(p.id) === String(refId));
+          }
+        } catch (_) {}
+      }
+    }
+    if (payment) {
+      const payPatId = payment.patient_id || payment.client_id || payment.clientId || payment.user_id;
+      if (payPatId && !isForbiddenId(payPatId)) {
+        const localMatch = findPatientInLocal(p => String(p.id) === String(payPatId));
+        if (localMatch) return String(localMatch.id);
+        if (/^[0-9a-fA-F-]{36}$/.test(String(payPatId))) return String(payPatId);
+      }
+      const payName = (payment.customer_name || payment.client_name || payment.clientName || '').trim();
+      if (payName && payName.toLowerCase() !== 'patient' && payName.toLowerCase() !== 'client') {
+        const match = findPatientInLocal(p => (p.full_name || p.name || '').toLowerCase().trim() === payName.toLowerCase());
+        if (match && !isForbiddenId(match.id)) return String(match.id);
+      }
+    }
+  }
+
+  // 6. Name extraction from message text
+  let extractedName = null;
+  const matchBooked = message.match(/^(.+?)\s+(?:booked|scheduled)\s+for/i);
+  const matchOrder = message.match(/^(.+?)\s+placed\s+an?\s+order/i);
+  const matchPayment = message.match(/confirmed\s+for\s+([^.]+)/i);
+  const matchReg = message.match(/^(.+?)\s+registered/i);
+
+  if (matchBooked) extractedName = matchBooked[1].trim();
+  else if (matchOrder) extractedName = matchOrder[1].trim();
+  else if (matchPayment) extractedName = matchPayment[1].trim();
+  else if (matchReg) extractedName = matchReg[1].trim();
+
+  if (extractedName && !['patient', 'client', 'user', 'someone', 'customer', 'admin'].includes(extractedName.toLowerCase())) {
+    const ext = extractedName.toLowerCase().trim();
+    const localMatch = findPatientInLocal(p => {
+      const pName = (p.full_name || p.name || '').toLowerCase().trim();
+      return pName === ext || pName.includes(ext) || ext.includes(pName);
+    });
+    if (localMatch && !isForbiddenId(localMatch.id)) return String(localMatch.id);
+  }
+
+  return null;
+}
+
+/**
+ * Asynchronously resolve patient ID, falling back to live Supabase queries if needed
+ */
+export async function resolvePatientFromNotification(notif, context = {}) {
+  // First attempt fast in-memory resolution
+  const fastId = resolvePatientFromNotificationSync(notif, context);
+  if (fastId) return fastId;
+
+  if (!notif) return null;
+
+  const currentAdminId = context.currentAdminId ? String(context.currentAdminId).toLowerCase().trim() : null;
+  const isForbiddenId = (id) => {
+    if (!id) return true;
+    const clean = String(id).toLowerCase().trim();
+    if (['null', 'undefined', 'admin', 'super-admin', 'current-admin', 'guest'].includes(clean)) return true;
+    if (currentAdminId && clean === currentAdminId) return true;
+    return false;
+  };
+
+  const rawPatId = notif.patient_id || notif.patientId;
+  const type = String(notif.type || notif.category || '').toLowerCase().trim();
+  const refId = notif.reference_id || notif.referenceId;
+  const message = String(notif.message || '').trim();
+  const title = String(notif.title || '').trim();
+
+  // Helper: query Supabase patient
+  const querySupabasePatient = async (column, value) => {
+    if (!value) return null;
+    try {
+      const { data } = await supabase
+        .from('patients')
+        .select('id, name, full_name, email, phone')
+        .eq(column, value)
+        .maybeSingle();
+      if (data && !isForbiddenId(data.id)) return data;
+    } catch (_) {}
+
+    if (supabaseAdmin) {
+      try {
+        const { data } = await supabaseAdmin
+          .from('patients')
+          .select('id, name, full_name, email, phone')
+          .eq(column, value)
+          .maybeSingle();
+        if (data && !isForbiddenId(data.id)) return data;
+      } catch (_) {}
+    }
+    return null;
+  };
+
+  const querySupabasePatientByName = async (nameVal) => {
+    if (!nameVal || nameVal.length < 2) return null;
+    try {
+      const { data } = await supabase
+        .from('patients')
+        .select('id, name, full_name')
+        .or(`full_name.ilike.%${nameVal}%,name.ilike.%${nameVal}%`)
+        .limit(1);
+      if (Array.isArray(data) && data.length > 0 && !isForbiddenId(data[0].id)) {
+        return data[0];
+      }
+    } catch (_) {}
+
+    if (supabaseAdmin) {
+      try {
+        const { data } = await supabaseAdmin
+          .from('patients')
+          .select('id, name, full_name')
+          .or(`full_name.ilike.%${nameVal}%,name.ilike.%${nameVal}%`)
+          .limit(1);
+        if (Array.isArray(data) && data.length > 0 && !isForbiddenId(data[0].id)) {
+          return data[0];
+        }
+      } catch (_) {}
+    }
+    return null;
+  };
+
+  let resolvedId = null;
+
+  // 1. Check direct patient_id in Supabase
+  if (rawPatId && !isForbiddenId(rawPatId)) {
+    const cleanId = String(rawPatId).trim();
+    const dbMatch = await querySupabasePatient('id', cleanId);
+    if (dbMatch) resolvedId = String(dbMatch.id);
+    else if (/^[0-9a-fA-F-]{36}$/.test(cleanId)) resolvedId = cleanId;
+  }
+
+  // 2. Reference ID for patient type
+  if (!resolvedId && (type === 'patient' || type === 'client') && refId && !isForbiddenId(refId)) {
+    const cleanRef = String(refId).trim();
+    const dbMatch = await querySupabasePatient('id', cleanRef);
+    if (dbMatch) resolvedId = String(dbMatch.id);
+    else if (/^[0-9a-fA-F-]{36}$/.test(cleanRef)) resolvedId = cleanRef;
+  }
+
+  // 3. Check appointment in Supabase
+  if (!resolvedId && (type === 'appointment' || title.toLowerCase().includes('appointment') || message.toLowerCase().includes('booked')) && refId) {
+    try {
+      const { data: dbAppt } = await supabase.from('appointments').select('*').eq('id', refId).maybeSingle();
+      if (dbAppt) {
+        const apptPatId = dbAppt.patient_id || dbAppt.client_id || dbAppt.clientId;
+        if (apptPatId && !isForbiddenId(apptPatId)) {
+          const dbMatch = await querySupabasePatient('id', apptPatId);
+          if (dbMatch) resolvedId = String(dbMatch.id);
+          else if (/^[0-9a-fA-F-]{36}$/.test(String(apptPatId))) resolvedId = String(apptPatId);
+        }
+        if (!resolvedId) {
+          const apptEmail = (dbAppt.patient_email || dbAppt.client_email || dbAppt.clientEmail || dbAppt.email || '').toLowerCase().trim();
+          if (apptEmail) {
+            const dbMatch = await querySupabasePatient('email', apptEmail);
+            if (dbMatch) resolvedId = String(dbMatch.id);
+          }
+        }
+        if (!resolvedId) {
+          const apptName = (dbAppt.patient_name || dbAppt.client_name || dbAppt.clientName || '').trim();
+          if (apptName && apptName.toLowerCase() !== 'patient' && apptName.toLowerCase() !== 'client') {
+            const dbMatch = await querySupabasePatientByName(apptName);
+            if (dbMatch) resolvedId = String(dbMatch.id);
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  // 4. Check order in Supabase
+  if (!resolvedId && (type === 'order' || title.toLowerCase().includes('order') || message.toLowerCase().includes('order')) && refId) {
+    try {
+      const { data: dbOrder } = await supabase.from('orders').select('*').or(`id.eq.${refId},order_number.eq.${refId},order_id.eq.${refId}`).maybeSingle();
+      if (dbOrder) {
+        const orderPatId = dbOrder.patient_id || dbOrder.client_id || dbOrder.clientId || dbOrder.user_id;
+        if (orderPatId && !isForbiddenId(orderPatId)) {
+          const dbMatch = await querySupabasePatient('id', orderPatId);
+          if (dbMatch) resolvedId = String(dbMatch.id);
+          else if (/^[0-9a-fA-F-]{36}$/.test(String(orderPatId))) resolvedId = String(orderPatId);
+        }
+        if (!resolvedId) {
+          const orderEmail = (dbOrder.customer_email || dbOrder.client_email || dbOrder.clientEmail || dbOrder.email || '').toLowerCase().trim();
+          if (orderEmail) {
+            const dbMatch = await querySupabasePatient('email', orderEmail);
+            if (dbMatch) resolvedId = String(dbMatch.id);
+          }
+        }
+        if (!resolvedId) {
+          const orderName = (dbOrder.customer_name || dbOrder.client_name || dbOrder.clientName || '').trim();
+          if (orderName && orderName.toLowerCase() !== 'client' && orderName.toLowerCase() !== 'patient') {
+            const dbMatch = await querySupabasePatientByName(orderName);
+            if (dbMatch) resolvedId = String(dbMatch.id);
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  // 5. Check payment in Supabase
+  if (!resolvedId && (type === 'payment' || title.toLowerCase().includes('payment')) && refId) {
+    try {
+      const { data: dbPay } = await supabase.from('payments').select('*').eq('id', refId).maybeSingle();
+      if (dbPay) {
+        const payPatId = dbPay.patient_id || dbPay.client_id || dbPay.clientId || dbPay.user_id;
+        if (payPatId && !isForbiddenId(payPatId)) {
+          const dbMatch = await querySupabasePatient('id', payPatId);
+          if (dbMatch) resolvedId = String(dbMatch.id);
+          else if (/^[0-9a-fA-F-]{36}$/.test(String(payPatId))) resolvedId = String(payPatId);
+        }
+        if (!resolvedId && dbPay.order_id) {
+          const { data: dbOrder } = await supabase.from('orders').select('*').eq('id', dbPay.order_id).maybeSingle();
+          if (dbOrder) {
+            const opId = dbOrder.patient_id || dbOrder.client_id || dbOrder.clientId;
+            if (opId && !isForbiddenId(opId)) resolvedId = String(opId);
+          }
+        }
+        if (!resolvedId && dbPay.appointment_id) {
+          const { data: dbAppt } = await supabase.from('appointments').select('*').eq('id', dbPay.appointment_id).maybeSingle();
+          if (dbAppt) {
+            const apId = dbAppt.patient_id || dbAppt.client_id || dbAppt.clientId;
+            if (apId && !isForbiddenId(apId)) resolvedId = String(apId);
+          }
+        }
+        if (!resolvedId) {
+          const payName = (dbPay.customer_name || dbPay.client_name || dbPay.clientName || '').trim();
+          if (payName && payName.toLowerCase() !== 'patient' && payName.toLowerCase() !== 'client') {
+            const dbMatch = await querySupabasePatientByName(payName);
+            if (dbMatch) resolvedId = String(dbMatch.id);
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  // 6. Name extraction from notification text against Supabase
+  if (!resolvedId) {
+    let extractedName = null;
+    const matchBooked = message.match(/^(.+?)\s+(?:booked|scheduled)\s+for/i);
+    const matchOrder = message.match(/^(.+?)\s+placed\s+an?\s+order/i);
+    const matchPayment = message.match(/confirmed\s+for\s+([^.]+)/i);
+    const matchReg = message.match(/^(.+?)\s+registered/i);
+
+    if (matchBooked) extractedName = matchBooked[1].trim();
+    else if (matchOrder) extractedName = matchOrder[1].trim();
+    else if (matchPayment) extractedName = matchPayment[1].trim();
+    else if (matchReg) extractedName = matchReg[1].trim();
+
+    if (extractedName && !['patient', 'client', 'user', 'someone', 'customer', 'admin'].includes(extractedName.toLowerCase())) {
+      const dbMatch = await querySupabasePatientByName(extractedName);
+      if (dbMatch) resolvedId = String(dbMatch.id);
+    }
+  }
+
+  // Backfill patient_id in database asynchronously if missing
+  if (resolvedId && notif.id && !notif.patient_id) {
+    try {
+      supabase.from('notifications')
+        .update({ patient_id: resolvedId })
+        .eq('id', notif.id)
+        .then(() => {})
+        .catch(() => {});
+    } catch (_) {}
+  }
+
+  return resolvedId;
+}
+
+/**
+ * Async dynamic route generator based on notification type and patient resolution.
+ * Strictly prevents navigation to the logged-in admin's profile for patient notifications.
+ */
+export async function resolveNotificationRoute(notif, context = {}) {
+  if (!notif) {
+    return { path: null, error: 'No notification data provided' };
+  }
+
+  const type = String(notif.type || notif.category || '').toLowerCase().trim();
+  const refId = notif.reference_id || notif.referenceId;
+  const isPatientRelated = isPatientRelatedNotification(notif);
+
+  // 1. Patient-related notification: MUST open the specific patient's profile
+  if (isPatientRelated) {
+    const patientId = await resolvePatientFromNotification(notif, context);
+
+    if (patientId) {
+      return {
+        path: `/patients/${encodeURIComponent(patientId)}`,
+        state: { patientId, fromNotification: true, notificationId: notif.id }
+      };
+    }
+
+    // Fallback if patient cannot be resolved: NEVER navigate to admin profile!
     return {
-      path: patId ? `/clients/${encodeURIComponent(patId)}` : '/clients',
-      state: { patientId: patId }
+      path: null,
+      error: 'Unable to locate the patient profile associated with this notification.'
     };
   }
 
-  if (notif.link) {
+  // 2. Safe custom link (strictly disallowing admin profile links)
+  if (notif.link && !notif.link.includes('/profile') && !notif.link.includes('/admin/profile')) {
+    return { path: notif.link };
+  }
+
+  // 3. Non-patient notifications
+  switch (type) {
+    case 'inquiry':
+    case 'ticket':
+      return {
+        path: '/inquiries',
+        state: { selectedInquiryId: refId, highlightId: refId },
+        search: refId ? `?ticket=${encodeURIComponent(refId)}` : ''
+      };
+    default:
+      return { path: '/notifications' };
+  }
+}
+
+/**
+ * Dynamic route generator (synchronous fallback for backwards compatibility)
+ */
+export function getNotificationRoute(notif, context = {}) {
+  if (!notif) return { path: '/notifications' };
+
+  const type = (notif.type || notif.category || '').toLowerCase().trim();
+  const refId = notif.reference_id || notif.referenceId;
+  const isPatientRelated = isPatientRelatedNotification(notif);
+
+  if (isPatientRelated) {
+    const patId = resolvePatientFromNotificationSync(notif, context);
+    if (patId) {
+      return {
+        path: `/patients/${encodeURIComponent(patId)}`,
+        state: { patientId: patId, fromNotification: true }
+      };
+    }
+    return {
+      path: null,
+      error: 'Unable to locate the patient profile associated with this notification.'
+    };
+  }
+
+  if (notif.link && !notif.link.includes('/profile') && !notif.link.includes('/admin/profile')) {
     return { path: notif.link };
   }
 
   switch (type) {
-    case 'appointment':
-      return {
-        path: '/appointments',
-        state: { selectedAppointmentId: refId, highlightId: refId },
-        search: refId ? `?id=${encodeURIComponent(refId)}` : ''
-      };
-    case 'order':
-      return {
-        path: refId ? `/orders/${encodeURIComponent(refId)}` : '/orders',
-        state: { selectedOrderId: refId }
-      };
-    case 'payment':
-      return {
-        path: '/payments',
-        state: { selectedPaymentId: refId, highlightId: refId },
-        search: refId ? `?id=${encodeURIComponent(refId)}` : ''
-      };
     case 'inquiry':
     case 'ticket':
       return {
@@ -416,7 +880,15 @@ export const notificationService = {
     const type = String(rawType).toLowerCase().trim();
     const category = String(rawCategory).toLowerCase().trim();
     const refId = payload.reference_id || payload.referenceId || (type === 'patient' ? (payload.patient_id || payload.patientId) : null);
-    const patId = payload.patient_id || payload.patientId || (type === 'patient' ? refId : null);
+    let patId = payload.patient_id || payload.patientId || (type === 'patient' ? refId : null);
+
+    // Auto-resolve patient_id if missing for patient-related notification
+    if (!patId && isPatientRelatedNotification(payload)) {
+      patId = resolvePatientFromNotificationSync(payload);
+    }
+
+    // Never save an admin profile link
+    const cleanLink = payload.link && !payload.link.includes('/profile') && !payload.link.includes('/admin/profile') ? payload.link : null;
 
     // 1. In-memory deduplication check against cached notifications
     try {
@@ -466,7 +938,7 @@ export const notificationService = {
       patient_id: patId ? String(patId) : null,
       is_read: Boolean(payload.is_read ?? false),
       user_id: payload.user_id || payload.userId || null,
-      link: payload.link || null,
+      link: cleanLink,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString()
     };

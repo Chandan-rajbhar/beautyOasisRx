@@ -1,12 +1,29 @@
 import React, { useRef, useEffect, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Check, ExternalLink, Calendar, ShoppingBag, CreditCard, MessageSquare, User, Bell } from 'lucide-react';
+import toast from 'react-hot-toast';
 import { useAdminData } from '../../../context/AdminDataContext';
+import { useAdminAuth } from '../../../context/AdminAuthContext';
 import { supabaseDataService } from '../../../services/supabaseDataService';
-import { getNotificationRoute, formatTimestamp, isStaticNotification, deduplicateNotifications } from '../../../services/notificationService';
+import {
+  resolveNotificationRoute,
+  getNotificationRoute,
+  formatTimestamp,
+  isStaticNotification,
+  deduplicateNotifications
+} from '../../../services/notificationService';
 
 export const AdminNotificationDropdown = ({ isOpen, onClose }) => {
-  const { notifications = [], markNotificationAsRead, markAllNotificationsAsRead } = useAdminData();
+  const {
+    notifications = [],
+    clients = [],
+    appointments = [],
+    orders = [],
+    payments = [],
+    markNotificationAsRead,
+    markAllNotificationsAsRead
+  } = useAdminData();
+  const { user: currentUser } = useAdminAuth();
   const dropdownRef = useRef(null);
   const navigate = useNavigate();
 
@@ -84,7 +101,7 @@ export const AdminNotificationDropdown = ({ isOpen, onClose }) => {
     }
   };
 
-  const handleNotificationClick = (notif, e) => {
+  const handleNotificationClick = async (notif, e) => {
     if (e) {
       e.stopPropagation();
       e.preventDefault();
@@ -93,9 +110,24 @@ export const AdminNotificationDropdown = ({ isOpen, onClose }) => {
       markNotificationAsRead(notif.id);
     }
     onClose();
-    const route = getNotificationRoute(notif);
-    if (route && route.path) {
-      navigate(route.path, { state: route.state });
+
+    try {
+      const route = await resolveNotificationRoute(notif, {
+        clients,
+        appointments,
+        orders,
+        payments,
+        currentAdminId: currentUser?.id
+      });
+
+      if (route && route.path) {
+        navigate(route.path, { state: route.state });
+      } else {
+        toast.error(route?.error || 'Unable to locate the patient profile for this notification.');
+      }
+    } catch (err) {
+      console.error('[AdminNotificationDropdown] Patient navigation error:', err);
+      toast.error('Unable to navigate to patient profile.');
     }
   };
 

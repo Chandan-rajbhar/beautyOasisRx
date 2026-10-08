@@ -121,6 +121,16 @@ export const PatientProfilePage = () => {
       return null;
     }
 
+    // Guard against admin accounts: Patient notifications & routes must never open the admin profile
+    try {
+      const authUser = JSON.parse(localStorage.getItem('bo_admin_user') || '{}');
+      if (authUser?.id && String(authUser.id).toLowerCase() === String(patientId).toLowerCase()) {
+        setError('This ID belongs to an administrator account, not a patient profile.');
+        setLoading(false);
+        return null;
+      }
+    } catch (_) {}
+
     try {
       if (!isSilent) setLoading(true);
       setError(null);
@@ -188,7 +198,7 @@ export const PatientProfilePage = () => {
         } catch (_) {}
       }
 
-      // 6. Check users table
+      // 6. Check users table (only if role is patient / client, NEVER admin/super_admin/staff)
       if (!record) {
         try {
           const userRes = await supabase
@@ -196,14 +206,19 @@ export const PatientProfilePage = () => {
             .select('*')
             .eq('id', patientId)
             .maybeSingle();
-          if (userRes.data) record = userRes.data;
+          if (userRes.data) {
+            const role = String(userRes.data.role || '').toLowerCase().trim();
+            if (role !== 'admin' && role !== 'super_admin' && role !== 'staff' && role !== 'administrator') {
+              record = userRes.data;
+            }
+          }
         } catch (_) {}
       }
 
-      // 7. Fallback to AdminDataContext
+      // 7. Fallback to AdminDataContext (excluding admin users)
       if (!record) {
         const cleanId = String(patientId).trim().toLowerCase();
-        record = contextClients.find((c) => c.id === patientId || (c.email && c.email.toLowerCase() === cleanId));
+        record = contextClients.find((c) => (c.id === patientId || (c.email && c.email.toLowerCase() === cleanId)) && String(c.role || '').toLowerCase() !== 'admin' && String(c.role || '').toLowerCase() !== 'super_admin');
       }
 
       if (record) {
