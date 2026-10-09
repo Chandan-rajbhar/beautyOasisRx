@@ -133,14 +133,24 @@ export function normalizeNotification(row) {
     message,
     type: rawType,
     category: rawCategory,
+    notification_type: row.notification_type || rawType,
     reference_id: refId,
+    related_entity_id: row.related_entity_id || refId,
     patient_id: row.patient_id || row.patientId || null,
     user_id: row.user_id || row.userId || null,
+    recipient_user_id: row.recipient_user_id || row.user_id || row.patient_id || null,
     is_read: isRead,
     read: isRead,
+    read_at: row.read_at || null,
+    delivery_status: row.delivery_status || 'sent',
+    delivery_details: row.delivery_details || [],
+    idempotency_key: row.idempotency_key || null,
+    data_payload: row.data_payload || row.data || {},
     created_at: row.created_at || new Date().toISOString(),
     timestamp: row.timestamp || (row.created_at ? formatTimestamp(row.created_at) : 'Just now'),
-    link: row.link || null
+    link: row.link || row.deep_link || row.action_url || null,
+    deep_link: row.deep_link || row.action_url || row.link || null,
+    action_url: row.action_url || row.deep_link || row.link || null
   };
 }
 
@@ -995,6 +1005,20 @@ export const notificationService = {
           const updated = deduplicateNotifications([normalized, ...(Array.isArray(list) ? list : [])]);
           localStorage.setItem('bo_cache_notifications', JSON.stringify(updated));
         } catch (_) {}
+
+        // If push delivery requested, trigger sendPushNotification in background
+        if (payload.sendPush) {
+          notificationService.sendPushNotification({
+            title: payload.title,
+            message: payload.message,
+            notification_type: type,
+            recipient_user_id: patId || payload.user_id,
+            related_entity_id: refId,
+            deep_link: cleanLink,
+            idempotency_key: payload.idempotency_key || `push-${insertData.id}`
+          }).catch(err => console.warn('[NotificationService] Background push dispatch notice:', err));
+        }
+
         return normalized;
       }
     } catch (err) {
@@ -1002,5 +1026,235 @@ export const notificationService = {
     }
 
     return normalizeNotification({ ...item, id: `local-${Date.now()}` });
+  },
+
+  /**
+   * Dispatch push notification via Supabase Edge Function 'send-push-notification'
+   * Authenticated, idempotent, server-side FCM HTTP v1 delivery.
+   */
+  async sendPushNotification(payload) {
+    if (!payload || !payload.title || !payload.message) {
+      return { success: false, error: 'Title and message are required for push notification.' };
+    }
+
+    const idempotencyKey = payload.idempotency_key || `notif_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    const body = {
+      title: payload.title.trim(),
+      message: payload.message.trim(),
+      body: payload.message.trim(),
+      notification_type: payload.notification_type || payload.type || payload.category || 'general',
+      category: payload.category || payload.notification_type || 'general',
+      recipient_type: payload.recipient_type || (payload.recipient_user_id ? 'specific_user' : 'all_users'),
+      recipient_user_id: payload.recipient_user_id || payload.user_id || payload.patient_id || null,
+      recipient_role: payload.recipient_role || null,
+      related_entity_id: payload.related_entity_id || payload.reference_id || null,
+      deep_link: payload.deep_link || payload.action_url || payload.link || null,
+      action_url: payload.action_url || payload.deep_link || payload.link || null,
+      data: payload.data || {},
+      idempotency_key: idempotencyKey,
+      priority: payload.priority || 'high'
+    };
+
+    try {
+      // 1. Try invoking through Supabase Functions client
+      let result = null;
+      try {
+        const { data, error } = await supabase.functions.invoke('send-push-notification', {
+          body,
+          headers: {
+            'x-idempotency-key': idempotencyKey
+          }
+        });
+
+        if (!error && data) {
+          result = data;
+        } else if (error) {
+          console.warn('[NotificationService] supabase.functions.invoke error:', error);
+        }
+      } catch (invokeErr) {
+        console.warn('[NotificationService] functions.invoke exception:', invokeErr);
+      }
+
+      // 2. Fallback direct HTTP invocation if functions.invoke failed (e.g. CORS/environment mismatch)
+      if (!result) {
+        try {
+          const supabaseUrl = 'https://tuepzwlxgnmtbjijtgta.supabase.co';
+          const { data: { session } } = await supabase.auth.getSession();
+          const authToken = session?.access_token || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR1ZXB6d2x4Z25tdGJqaWp0Z3RhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA1Njk5NzksImV4cCI6MjEwNjE0NTk3OX0.KwVH3satwRxR9NzAwDBdRzANknMVDKSdIxynvhRkkyY';
+
+          const res = await fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${authToken}`,
+              'apikey': 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR1ZXB6d2x4Z25tdGJqaWp0Z3RhIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA1Njk5NzksImV4cCI6MjEwNjE0NTk3OX0.KwVH3satwRxR9NzAwDBdRzANknMVDKSdIxynvhRkkyY',
+              'x-idempotency-key': idempotencyKey
+            },
+            body: JSON.stringify(body)
+          });
+
+          if (res.ok) {
+            result = await res.json();
+          } else {
+            const errText = await res.text();
+            console.warn(`[NotificationService] Edge Function HTTP ${res.status}:`, errText);
+          }
+        } catch (fetchErr) {
+          console.warn('[NotificationService] Direct fetch error:', fetchErr);
+        }
+      }
+
+      // 3. Fallback: If edge function endpoint is not yet deployed, save directly into Supabase notifications
+      if (!result) {
+        console.log('[NotificationService] Falling back to direct database insertion for notification record');
+        const dbRecord = await notificationService.createNotification({
+          ...body,
+          delivery_status: 'pending'
+        });
+
+        return {
+          success: true,
+          notification_id: dbRecord?.id,
+          delivery_status: 'pending',
+          tokens_count: 0,
+          sent_count: 0,
+          failed_count: 0,
+          message: 'Notification saved to Supabase (Edge Function offline/pending deployment).',
+          notification: dbRecord
+        };
+      }
+
+      // Update local cache with newly created notification
+      if (result.notification) {
+        const normalized = normalizeNotification(result.notification);
+        try {
+          const cached = localStorage.getItem('bo_cache_notifications');
+          const list = cached ? JSON.parse(cached) : [];
+          const updated = deduplicateNotifications([normalized, ...(Array.isArray(list) ? list : [])]);
+          localStorage.setItem('bo_cache_notifications', JSON.stringify(updated));
+        } catch (_) {}
+      }
+
+      return result;
+    } catch (err) {
+      console.error('[NotificationService] sendPushNotification error:', err);
+      return { success: false, error: err.message || 'Push dispatch failed' };
+    }
+  },
+
+  /**
+   * Retrieve active registered push devices with user details
+   */
+  async fetchPushDevices() {
+    try {
+      const { data, error } = await supabase
+        .from('push_devices')
+        .select('*')
+        .order('last_seen_at', { ascending: false });
+
+      if (!error && Array.isArray(data)) {
+        return data;
+      }
+      return [];
+    } catch (err) {
+      console.warn('[NotificationService] fetchPushDevices error:', err);
+      return [];
+    }
+  },
+
+  /**
+   * Fetch device counts & platform distribution
+   */
+  async fetchPushDeviceStats() {
+    try {
+      const devices = await this.fetchPushDevices();
+      const active = devices.filter(d => d.is_active);
+      const androidCount = active.filter(d => d.platform === 'android').length;
+      const iosCount = active.filter(d => d.platform === 'ios').length;
+      const webCount = active.filter(d => d.platform === 'web').length;
+
+      return {
+        total: devices.length,
+        activeCount: active.length,
+        androidCount,
+        iosCount,
+        webCount
+      };
+    } catch (_) {
+      return { total: 0, activeCount: 0, androidCount: 0, iosCount: 0, webCount: 0 };
+    }
+  },
+
+  /**
+   * Register or update a device's FCM token in Supabase
+   */
+  async registerPushDevice({ userId, fcmToken, platform = 'android', deviceId = null, deviceName = null, appVersion = null }) {
+    if (!userId || !fcmToken) return { success: false, error: 'userId and fcmToken required' };
+
+    try {
+      // Try RPC first
+      const { data: rpcData, error: rpcError } = await supabase.rpc('register_push_device', {
+        p_user_id: userId,
+        p_fcm_token: fcmToken,
+        p_platform: platform,
+        p_device_id: deviceId,
+        p_device_name: deviceName,
+        p_app_version: appVersion
+      });
+
+      if (!rpcError && rpcData) {
+        return rpcData;
+      }
+
+      // Fallback direct upsert
+      const { data, error } = await supabase
+        .from('push_devices')
+        .upsert({
+          user_id: userId,
+          fcm_token: fcmToken,
+          platform: platform.toLowerCase(),
+          device_id: deviceId,
+          device_name: deviceName,
+          app_version: appVersion,
+          is_active: true,
+          last_seen_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'fcm_token' })
+        .select()
+        .single();
+
+      if (!error && data) {
+        return { success: true, device: data };
+      }
+
+      return { success: false, error: error?.message || 'Device registration failed' };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  },
+
+  /**
+   * Disassociate/deactivate device token on logout
+   */
+  async unregisterPushDevice(fcmToken, userId = null) {
+    if (!fcmToken) return { success: false };
+    try {
+      const { data, error } = await supabase.rpc('unregister_push_device', {
+        p_fcm_token: fcmToken,
+        p_user_id: userId
+      });
+
+      if (!error && data) return data;
+
+      await supabase
+        .from('push_devices')
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq('fcm_token', fcmToken);
+
+      return { success: true };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
   }
 };
+

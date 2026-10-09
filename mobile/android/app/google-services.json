@@ -1,0 +1,34 @@
+{
+  "project_info": {
+    "project_number": "103948572019",
+    "project_id": "beautyoasis-rx",
+    "storage_bucket": "beautyoasis-rx.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:103948572019:android:b8f9a2e4c1d0e5f6789abc",
+        "android_client_info": {
+          "package_name": "com.beautyoasis.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "103948572019-android.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD-beautyOasisFCMKeySampleReady1234"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

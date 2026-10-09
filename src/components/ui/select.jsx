@@ -253,6 +253,15 @@ export const ShadcnSelect = ({
             whiteSpace: 'nowrap'
           }}
         >
+          {selectedOption?.imageUrl && (
+            <img
+              src={selectedOption.imageUrl}
+              alt=""
+              aria-hidden="true"
+              style={{ width: '28px', height: '28px', borderRadius: '5px', objectFit: 'cover', flexShrink: 0 }}
+              onError={(e) => { e.currentTarget.style.display = 'none'; }}
+            />
+          )}
           {selectedOption?.dotColor && (
             <span
               style={{
@@ -271,6 +280,16 @@ export const ShadcnSelect = ({
         {options.map((opt) => (
           <SelectItem key={opt.value} value={opt.value} disabled={Boolean(opt.disabled)}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+              {opt.imageUrl && (
+                <img
+                  src={opt.imageUrl}
+                  alt=""
+                  aria-hidden="true"
+                  loading="lazy"
+                  style={{ width: '36px', height: '36px', borderRadius: '5px', objectFit: 'cover', flexShrink: 0 }}
+                  onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                />
+              )}
               {opt.dotColor && (
                 <span
                   style={{

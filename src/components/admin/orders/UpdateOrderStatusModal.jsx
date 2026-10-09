@@ -21,6 +21,7 @@ import {
   fetchOrderStatuses,
   updateOrderStatusAndDetails
 } from '../../../services/orderService';
+import { notificationService } from '../../../services/notificationService';
 
 export const UpdateOrderStatusModal = ({
   isOpen,
@@ -155,6 +156,20 @@ export const UpdateOrderStatusModal = ({
       setCurrentOrder(updatedOrder);
 
       toast.success(`Order #${order.orderNumber || order.id} status updated to ${selectedStatus}!`);
+
+      // Dispatch push notification to patient
+      const patientId = updatedOrder.patient_id || updatedOrder.client_id || updatedOrder.clientId || updatedOrder.user_id;
+      const orderRef = updatedOrder.order_number || updatedOrder.orderNumber || order.id;
+      notificationService.sendPushNotification({
+        title: `Order Status Update: #${orderRef}`,
+        message: `Your apothecary order status is now ${selectedStatus}.`,
+        notification_type: 'order',
+        category: 'order',
+        recipient_user_id: patientId || null,
+        related_entity_id: String(order.id),
+        deep_link: `/orders/${order.id}`,
+        idempotency_key: `order-status-${order.id}-${selectedStatus}`
+      }).catch(err => console.warn('[OrderModal] Push dispatch notice:', err));
 
       // Notify parent to refresh table and context
       if (onStatusUpdated) {

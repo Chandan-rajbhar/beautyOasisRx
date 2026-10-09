@@ -1294,7 +1294,8 @@ export const ClientsPage = () => {
               category: 'patient',
               reference_id: String(patientId),
               patient_id: String(patientId),
-              is_read: false
+              is_read: false,
+              sendPush: true
             });
             supabaseDataService.fetchAll('notifications', { forceFresh: true });
           }
@@ -2219,6 +2220,7 @@ export const ClientsPage = () => {
                 className="admin-form-input"
                 placeholder="patient@luxurymail.com"
                 value={formData.email}
+                disabled={Boolean(editClient)}
                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                 readOnly
                 onFocus={(e) => { e.target.readOnly = false; }}

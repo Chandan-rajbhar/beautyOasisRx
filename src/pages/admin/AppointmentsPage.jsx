@@ -31,6 +31,7 @@ import { ShadcnSelect } from '../../components/ui/select';
 import { supabase } from '../../lib/supabaseClient';
 import { supabaseAdmin } from '../../lib/supabaseAdmin';
 import { supabaseDataService } from '../../services/supabaseDataService';
+import { notificationService } from '../../services/notificationService';
 import {
   getAppointmentDateObj,
   isAppointmentUpcoming,
@@ -548,9 +549,11 @@ export const AppointmentsPage = () => {
       const title = s.protocol_title || s.title || s.name || 'Treatment Protocol';
       const dur = s.duration || '60 Mins';
       const price = Number(s.price ?? s.numericPrice ?? 0);
+      const primaryImage = Array.isArray(s.images) ? s.images[0] : null;
       return {
         value: String(s.id),
-        label: `${title} (${dur} - $${price})`
+        label: `${title} (${dur} - $${price})`,
+        imageUrl: (typeof primaryImage === 'string' ? primaryImage : primaryImage?.url) || s.image_url || s.image || s.imageUrl || ''
       };
     });
   }, [protocolsList]);
@@ -984,6 +987,18 @@ export const AppointmentsPage = () => {
           ...newAppointment,
           _skipDbInsert: Boolean(insData)
         });
+
+        // 3. Dispatch Push Notification to patient's registered mobile device
+        notificationService.sendPushNotification({
+          title: `Appointment Confirmed: ${formData.serviceName || 'Treatment Session'}`,
+          message: `Your appointment is confirmed for ${formData.date} at ${formData.time}.`,
+          notification_type: 'appointment',
+          category: 'appointment',
+          recipient_user_id: formData.clientId || null,
+          related_entity_id: newAppointment.id,
+          deep_link: `/appointments/${newAppointment.id}`,
+          idempotency_key: `appt-${newAppointment.id}`
+        }).catch(err => console.warn('[AppointmentsPage] Push dispatch notice:', err));
 
         toast.success('New clinical appointment scheduled successfully.');
         setIsAddDrawerOpen(false);
@@ -1874,7 +1889,7 @@ export const AppointmentsPage = () => {
                 value={formData.clientId}
                 onChange={(val) => handleClientSelect(val)}
                 options={patientOptions}
-                placeholder="-- Choose Existing Patient --"
+                placeholder="-- Choose Existing User --"
               />
             </div>
 
@@ -1888,6 +1903,7 @@ export const AppointmentsPage = () => {
                 onChange={(val) => handleServiceSelect(val)}
                 options={serviceOptions}
                 placeholder="-- Choose Treatment Protocol --"
+                contentStyle={{ width: '100%', maxHeight: '280px', boxSizing: 'border-box' }}
               />
             </div>
 

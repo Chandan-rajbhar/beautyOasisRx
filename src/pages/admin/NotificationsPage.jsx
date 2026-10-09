@@ -9,11 +9,14 @@ import {
   MessageSquare,
   ExternalLink,
   Trash2,
-  User
+  User,
+  Send,
+  Smartphone
 } from 'lucide-react';
 import { useAdminData } from '../../context/AdminDataContext';
 import { useAdminAuth } from '../../context/AdminAuthContext';
 import { AdminButton } from '../../components/admin/ui/AdminButton';
+import { SendNotificationModal } from '../../components/admin/ui/SendNotificationModal';
 import { supabase } from '../../lib/supabaseClient';
 import { supabaseDataService } from '../../services/supabaseDataService';
 import toast from 'react-hot-toast';
@@ -43,6 +46,7 @@ export const NotificationsPage = () => {
 
   const navigate = useNavigate();
   const [filterType, setFilterType] = useState('ALL');
+  const [isSendModalOpen, setIsSendModalOpen] = useState(false);
   const [localNotifications, setLocalNotifications] = useState(() => {
     let list = [];
     if (Array.isArray(notifications)) list = notifications;
@@ -124,6 +128,9 @@ export const NotificationsPage = () => {
       const isUnread = !notif.is_read && !notif.read;
 
       if (filterType === 'UNREAD') return isUnread;
+      if (filterType === 'SENT_PUSHES') {
+        return Boolean(notif.delivery_status || notif.recipient_user_id || notif.idempotency_key || notif.data_payload?.source === 'dashboard_manual_dispatch');
+      }
       if (filterType === 'APPOINTMENTS') return category === 'appointment' || type === 'appointment';
       if (filterType === 'ORDERS') return category === 'order' || type === 'order';
       if (filterType === 'PAYMENTS') return category === 'payment' || type === 'payment';
@@ -218,16 +225,24 @@ export const NotificationsPage = () => {
       <div className="admin-page-header">
         <div className="admin-page-title">
           <h1>Clinic Notifications & Alerts</h1>
-          <p>Real-time audit log of appointments, patient registrations, orders, and inquiries.</p>
+          <p>Real-time push delivery audit log for appointments, registrations, orders, and FCM broadcasts.</p>
         </div>
 
-        <div className="admin-page-actions">
+        <div className="admin-page-actions" style={{ display: 'flex', gap: '10px' }}>
           <AdminButton
             variant="secondary"
             onClick={handleMarkAllAsRead}
             icon={<CheckCheck size={16} />}
           >
             Mark All as Read
+          </AdminButton>
+
+          <AdminButton
+            variant="primary"
+            onClick={() => setIsSendModalOpen(true)}
+            icon={<Send size={16} />}
+          >
+            Send Push Notification
           </AdminButton>
         </div>
       </div>
@@ -237,6 +252,7 @@ export const NotificationsPage = () => {
         {[
           { id: 'ALL', label: `All Updates (${localNotifications.length})` },
           { id: 'UNREAD', label: `Unread (${unreadCount})` },
+          { id: 'SENT_PUSHES', label: 'Push Broadcasts' },
           { id: 'APPOINTMENTS', label: 'Appointments' },
           { id: 'ORDERS', label: 'Orders' },
           { id: 'PAYMENTS', label: 'Payments' },
@@ -267,6 +283,8 @@ export const NotificationsPage = () => {
           filteredNotifications.map((notif) => {
             const isRead = Boolean(notif.is_read || notif.read);
             const timeText = notif.timestamp || (notif.created_at ? formatTimestamp(notif.created_at) : 'Just now');
+            const deliveryStatus = notif.delivery_status;
+
             return (
               <div
                 key={notif.id}
@@ -302,10 +320,11 @@ export const NotificationsPage = () => {
                   </div>
 
                   <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px', flexWrap: 'wrap' }}>
                       <span style={{ fontWeight: 700, color: '#0f2942', fontSize: '0.9rem' }}>
                         {notif.title}
                       </span>
+
                       {!isRead && (
                         <span
                           style={{
@@ -319,6 +338,49 @@ export const NotificationsPage = () => {
                           }}
                         >
                           New
+                        </span>
+                      )}
+
+                      {deliveryStatus && (
+                        <span
+                          style={{
+                            background:
+                              deliveryStatus === 'sent'
+                                ? '#dcfce7'
+                                : deliveryStatus === 'no_devices'
+                                ? '#fef3c7'
+                                : deliveryStatus === 'partial'
+                                ? '#fef9c3'
+                                : deliveryStatus === 'failed'
+                                ? '#fee2e2'
+                                : '#f1f5f9',
+                            color:
+                              deliveryStatus === 'sent'
+                                ? '#166534'
+                                : deliveryStatus === 'no_devices'
+                                ? '#92400e'
+                                : deliveryStatus === 'partial'
+                                ? '#854d0e'
+                                : deliveryStatus === 'failed'
+                                ? '#991b1b'
+                                : '#475569',
+                            fontSize: '0.62rem',
+                            fontWeight: 700,
+                            padding: '2px 6px',
+                            borderRadius: '9999px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '3px',
+                            textTransform: 'uppercase'
+                          }}
+                          title={deliveryStatus === 'no_devices' ? 'Saved in Supabase (Recipient has 0 devices)' : `FCM Status: ${deliveryStatus}`}
+                        >
+                          <Smartphone size={10} />
+                          {deliveryStatus === 'sent'
+                            ? 'FCM Sent'
+                            : deliveryStatus === 'no_devices'
+                            ? 'No Devices'
+                            : deliveryStatus}
                         </span>
                       )}
                     </div>
@@ -379,6 +441,20 @@ export const NotificationsPage = () => {
           </div>
         )}
       </div>
+
+      {/* Broadcast Push Notification Modal */}
+      <SendNotificationModal
+        isOpen={isSendModalOpen}
+        onClose={() => setIsSendModalOpen(false)}
+        onNotificationSent={(newNotif) => {
+          if (newNotif?.notification) {
+            setLocalNotifications((prev) =>
+              deduplicateNotifications([normalizeNotification(newNotif.notification), ...prev])
+            );
+          }
+          supabaseDataService.fetchAll('notifications', { forceFresh: true });
+        }}
+      />
     </div>
   );
 };

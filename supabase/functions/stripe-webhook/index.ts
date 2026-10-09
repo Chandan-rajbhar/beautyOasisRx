@@ -168,6 +168,63 @@ serve(async (req: Request) => {
           }
         }
       }
+
+      // ─────────────────────────────────────────────────────────────
+      // VERIFIED PAYMENT NOTIFICATION & PUSH DISPATCH
+      // ─────────────────────────────────────────────────────────────
+      const notifIdempotency = `payment-notif-${paymentIntent.id}`;
+      const { data: existingNotif } = await supabase
+        .from("notifications")
+        .select("id")
+        .eq("idempotency_key", notifIdempotency)
+        .maybeSingle();
+
+      if (!existingNotif) {
+        const patientId = paymentIntent.metadata?.patient_id || null;
+        const currencySymbol = paymentIntent.currency.toUpperCase() === "USD" ? "$" : `${paymentIntent.currency.toUpperCase()} `;
+        const formattedAmt = `${currencySymbol}${(paymentIntent.amount / 100).toFixed(2)}`;
+
+        await supabase.from("notifications").insert({
+          title: `Payment Confirmed (${formattedAmt})`,
+          message: `Payment of ${formattedAmt} received successfully for ${recordType === 'appointment' ? 'appointment session' : 'apothecary order'}.`,
+          type: "payment",
+          category: "payment",
+          notification_type: "payment",
+          recipient_user_id: patientId,
+          related_entity_id: paymentIntent.id,
+          deep_link: recordId ? (recordType === 'appointment' ? `/appointments/${recordId}` : `/orders/${recordId}`) : null,
+          delivery_status: "pending",
+          idempotency_key: notifIdempotency,
+          is_read: false,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+
+        // Trigger push notification to patient's registered devices
+        try {
+          const edgeFuncUrl = `${supabaseUrl}/functions/v1/send-push-notification`;
+          await fetch(edgeFuncUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Authorization": `Bearer ${supabaseServiceKey}`,
+              "apikey": supabaseServiceKey,
+              "x-idempotency-key": notifIdempotency,
+            },
+            body: JSON.stringify({
+              title: `Payment Confirmed (${formattedAmt})`,
+              message: `Your payment of ${formattedAmt} has been processed successfully.`,
+              notification_type: "payment",
+              recipient_user_id: patientId,
+              related_entity_id: paymentIntent.id,
+              deep_link: recordId ? (recordType === 'appointment' ? `/appointments/${recordId}` : `/orders/${recordId}`) : null,
+              idempotency_key: notifIdempotency,
+            }),
+          });
+        } catch (pushErr) {
+          console.warn("Webhook push dispatch warning:", pushErr);
+        }
+      }
     }
 
     return new Response(JSON.stringify({ received: true }), {

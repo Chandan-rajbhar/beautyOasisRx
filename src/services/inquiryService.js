@@ -10,6 +10,7 @@
 
 import { supabase } from '../lib/supabaseClient';
 import { supabaseAdmin } from '../lib/supabaseAdmin';
+import { notificationService } from './notificationService';
 
 const INQUIRIES_CACHE_KEY = 'bo_inquiries_dynamic_cache';
 const MSGS_CACHE_PREFIX = 'bo_inquiry_msgs_';
@@ -270,6 +271,19 @@ export const inquiryService = {
       const list = cached ? JSON.parse(cached) : [];
       const updatedList = [normalized, ...list.filter(x => x.id !== normalized.id && x.ticket_id !== normalized.ticket_id)];
       localStorage.setItem(INQUIRIES_CACHE_KEY, JSON.stringify(updatedList));
+    } catch (_) {}
+
+    // Dispatch notification to admins
+    try {
+      notificationService.createNotification({
+        title: `New Inquiry Lead: ${normalized.name || 'Prospect'}`,
+        message: `${normalized.name || 'Prospect'} submitted a new consultation inquiry (${normalized.subject || 'Consultation'}).`,
+        type: 'inquiry',
+        category: 'inquiry',
+        reference_id: normalized.ticket_id || normalized.id,
+        link: `/inquiries?ticket=${encodeURIComponent(normalized.ticket_id || normalized.id)}`,
+        sendPush: true
+      });
     } catch (_) {}
 
     return normalized;
