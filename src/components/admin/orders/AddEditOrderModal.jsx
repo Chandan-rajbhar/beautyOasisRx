@@ -321,7 +321,7 @@ export const AddEditOrderModal = ({
             <User size={16} color="#1e5aa8" /> Patient Information
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+          <div className="coupon-form-grid-2">
             <div className="admin-form-group">
               <label className="admin-form-label">Select Registered Patient</label>
               <Select
@@ -415,11 +415,8 @@ export const AddEditOrderModal = ({
             {items.map((item, idx) => (
               <div
                 key={idx}
+                className="order-line-item-grid"
                 style={{
-                  display: 'grid',
-                  gridTemplateColumns: '2.5fr 1fr 1fr 1fr auto',
-                  gap: '8px',
-                  alignItems: 'center',
                   background: '#ffffff',
                   padding: '8px',
                   border: '1px solid #e2e8f0',
@@ -513,7 +510,7 @@ export const AddEditOrderModal = ({
         </div>
 
         {/* Statuses (Order Status & Payment Status) */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+        <div className="coupon-form-grid-2">
           <div className="admin-form-group">
             <label className="admin-form-label">Order Status</label>
             {isEditing ? (
@@ -650,7 +647,7 @@ export const AddEditOrderModal = ({
         </div>
 
         {/* Buttons */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+        <div className="admin-drawer-footer-actions">
           <AdminButton variant="secondary" onClick={onClose} disabled={isSubmitting}>
             Cancel
           </AdminButton>

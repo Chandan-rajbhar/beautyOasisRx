@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { ShadcnSelect } from '../../components/ui/select';
 import {
   Shield,
@@ -44,13 +45,18 @@ const getAuthPhotoMetadata = (photoUrl) => {
 
 const cacheUserPhoto = (key, photoUrl) => {
   try {
-    if (isInlineImage(photoUrl)) {
+    if (!photoUrl || isInlineImage(photoUrl) || photoUrl.length > 2000) {
       localStorage.removeItem(key);
       return;
     }
     localStorage.setItem(key, photoUrl);
-  } catch (_) { }
+  } catch (_) {
+    try {
+      localStorage.removeItem(key);
+    } catch (_) {}
+  }
 };
+
 
 // ─── Role definitions ────────────────────────────────────────────────────────
 const ROLES = [
@@ -1064,6 +1070,26 @@ export const AdminUsersPage = () => {
     }
   };
 
+  const activeMenuUser = useMemo(() => users.find(u => u.id === actionMenuUserId) || null, [users, actionMenuUserId]);
+
+  const handleOpenActionMenu = (e, row) => {
+    e.stopPropagation();
+    if (actionMenuUserId === row.id) {
+      setActionMenuUserId(null);
+      setActionMenuPosition(null);
+    } else {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const dropdownH = 190;
+      const openUp = window.innerHeight - rect.bottom < dropdownH && rect.top > dropdownH;
+      const rightOffset = Math.max(12, Math.min(window.innerWidth - 180, window.innerWidth - rect.right));
+      setActionMenuPosition({
+        top: openUp ? rect.top - dropdownH - 6 : rect.bottom + 6,
+        right: rightOffset,
+      });
+      setActionMenuUserId(row.id);
+    }
+  };
+
   // ── Table columns ──────────────────────────────────────────────────────────
   const columns = [
     {
@@ -1141,28 +1167,12 @@ export const AdminUsersPage = () => {
       align: 'right',
       width: '70px',
       render: (row) => {
-        const isSelf = currentUser?.id === row.id;
-        const isActive = row.status === 'active';
         const isOpen = actionMenuUserId === row.id;
         return (
           <div className="user-action-menu-container" style={{ position: 'relative', display: 'inline-block' }}>
             <button
               type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (actionMenuUserId === row.id) {
-                  setActionMenuUserId(null); setActionMenuPosition(null);
-                } else {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const dropdownH = 190;
-                  const openUp = window.innerHeight - rect.bottom < dropdownH && rect.top > dropdownH;
-                  setActionMenuPosition({
-                    top: openUp ? rect.top - dropdownH - 6 : rect.bottom + 6,
-                    right: Math.max(16, window.innerWidth - rect.right),
-                  });
-                  setActionMenuUserId(row.id);
-                }
-              }}
+              onClick={(e) => handleOpenActionMenu(e, row)}
               title="Actions"
               aria-label="Actions menu"
               style={{
@@ -1175,70 +1185,168 @@ export const AdminUsersPage = () => {
             >
               <MoreVertical size={16} />
             </button>
-
-            {isOpen && actionMenuPosition && (
-              <div
-                className="user-action-dropdown-menu"
-                style={{
-                  position: 'fixed',
-                  top: `${actionMenuPosition.top}px`,
-                  right: `${actionMenuPosition.right}px`,
-                  width: '168px',
-                  background: '#ffffff', border: '1px solid #e2e8f0',
-                  borderRadius: '10px',
-                  boxShadow: '0 10px 25px -5px rgba(15,41,66,0.14), 0 8px 10px -6px rgba(15,41,66,0.08)',
-                  zIndex: 99999, padding: '6px',
-                  display: 'flex', flexDirection: 'column', gap: '2px',
-                }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                {/* View */}
-                <MenuItem
-                  icon={<Eye size={15} color="#1e5aa8" />}
-                  label="View User"
-                  onClick={() => { setActionMenuUserId(null); setActionMenuPosition(null); setViewUser(row); }}
-                />
-
-                {/* Edit */}
-                <MenuItem
-                  icon={<Edit2 size={15} color="#475569" />}
-                  label="Edit User"
-                  onClick={() => { setActionMenuUserId(null); setActionMenuPosition(null); handleEditClick(row); }}
-                />
-
-                {/* Change Status */}
-                {!isSelf && (
-                  <MenuItem
-                    icon={isActive ? <UserX size={15} color="#b45309" /> : <UserCheck size={15} color="#15803d" />}
-                    label={isActive ? 'Deactivate' : 'Activate'}
-                    color={isActive ? '#b45309' : '#15803d'}
-                    hoverBg={isActive ? '#fffbeb' : '#f0fdf4'}
-                    onClick={() => {
-                      setActionMenuUserId(null); setActionMenuPosition(null);
-                      setStatusConfirm({ user: row, newStatus: isActive ? 'inactive' : 'active' });
-                    }}
-                  />
-                )}
-
-                {/* Divider */}
-                {!isSelf && <div style={{ height: '1px', background: '#f1f5f9', margin: '4px 0' }} />}
-
-                {/* Delete */}
-                {!isSelf && (
-                  <MenuItem
-                    icon={<Trash2 size={15} color="#dc2626" />}
-                    label="Delete User"
-                    danger
-                    onClick={() => { setActionMenuUserId(null); setActionMenuPosition(null); setDeleteConfirmId(row.id); }}
-                  />
-                )}
-              </div>
-            )}
           </div>
         );
       },
     },
   ];
+
+  // ── Mobile Card Render ───────────────────────────────────────────────────
+  const renderMobileCard = (row) => {
+    const isSelf = currentUser?.id === row.id;
+    const isActive = row.status === 'active';
+    const isOpen = actionMenuUserId === row.id;
+    const photo = row.profile_photo_url || row.avatar;
+    const rawRole = (row.role || 'Super Admin').toLowerCase().trim();
+    const roleLabel = rawRole.includes('patient') ? 'Patient' : 'Super Admin';
+    const createdDate = row.created_at
+      ? new Date(row.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+      : '—';
+
+    return (
+      <div
+        className="user-mobile-card"
+        style={{
+          background: '#ffffff',
+          border: '1px solid #e2e8f0',
+          borderRadius: '12px',
+          padding: '14px 16px',
+          boxShadow: '0 1px 3px rgba(15, 41, 66, 0.04)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+          position: 'relative'
+        }}
+      >
+        {/* Header: User Info + Action Trigger */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, flex: 1 }}>
+            {photo ? (
+              <img
+                src={photo}
+                alt={row.name}
+                loading="lazy"
+                decoding="async"
+                style={{
+                  width: '42px',
+                  height: '42px',
+                  borderRadius: '50%',
+                  objectFit: 'cover',
+                  border: '1.5px solid #cbd5e1',
+                  flexShrink: 0
+                }}
+                onError={(e) => {
+                  e.target.style.display = 'none';
+                  if (e.target.nextElementSibling) e.target.nextElementSibling.style.display = 'flex';
+                }}
+              />
+            ) : null}
+            <div
+              style={{
+                width: '42px',
+                height: '42px',
+                borderRadius: '50%',
+                background: 'linear-gradient(135deg, #1e5aa8, #16a34a)',
+                display: photo ? 'none' : 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: '#fff',
+                fontWeight: 700,
+                fontSize: '0.95rem',
+                flexShrink: 0
+              }}
+            >
+              {(row.name || row.email || '?')[0].toUpperCase()}
+            </div>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div
+                style={{
+                  fontWeight: 700,
+                  color: '#0f2942',
+                  fontSize: '0.92rem',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                {row.name || '—'}
+              </div>
+              <div
+                style={{
+                  fontSize: '0.78rem',
+                  color: '#64748b',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  marginTop: '1px'
+                }}
+              >
+                {row.email}
+              </div>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={(e) => handleOpenActionMenu(e, row)}
+            title="User Actions"
+            aria-label="User actions menu"
+            style={{
+              background: isOpen ? '#e2e8f0' : '#f8fafc',
+              border: `1px solid ${isOpen ? '#94a3b8' : '#cbd5e1'}`,
+              borderRadius: '6px',
+              padding: '6px 8px',
+              cursor: 'pointer',
+              color: '#334155',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0
+            }}
+          >
+            <MoreVertical size={16} />
+          </button>
+        </div>
+
+        {/* Metadata row: Role Badge, Status Badge, Created Date */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            flexWrap: 'wrap',
+            gap: '8px',
+            paddingTop: '8px',
+            borderTop: '1px solid #f1f5f9'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <AdminBadge status={roleLabel} />
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '4px',
+                padding: '2px 8px',
+                borderRadius: '20px',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                background: isActive ? '#dcfce7' : '#f1f5f9',
+                color: isActive ? '#15803d' : '#64748b'
+              }}
+            >
+              {isActive ? <UserCheck size={11} /> : <UserX size={11} />}
+              {isActive ? 'Active' : 'Inactive'}
+            </span>
+          </div>
+
+          <span style={{ fontSize: '0.76rem', color: '#94a3b8' }}>
+            Joined {createdDate}
+          </span>
+        </div>
+      </div>
+    );
+  };
 
   // ─────────────────────────────────────────────────────────────────────────
   // RENDER
@@ -1295,6 +1403,7 @@ export const AdminUsersPage = () => {
       <AdminTable
         columns={columns}
         data={filteredUsers}
+        renderMobileCard={renderMobileCard}
         loading={loading}
         itemsPerPage={10}
         emptyTitle="No Super Admin accounts found"
@@ -1319,7 +1428,7 @@ export const AdminUsersPage = () => {
         }
         width="560px"
         footer={
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', width: '100%' }}>
+          <div className="admin-drawer-footer-actions">
             <AdminButton variant="secondary" disabled={actionLoading}
               onClick={() => { setIsDrawerOpen(false); setEditUser(null); resetForm('super_admin'); }}>
               Cancel
@@ -1591,7 +1700,7 @@ export const AdminUsersPage = () => {
         subtitle={viewUser?.email}
         width="480px"
         footer={
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', width: '100%' }}>
+          <div className="admin-drawer-footer-actions">
             <AdminButton variant="secondary" onClick={() => setViewUser(null)}>Close</AdminButton>
             <AdminButton variant="primary" onClick={() => { setViewUser(null); handleEditClick(viewUser); }}>Edit User</AdminButton>
           </div>
@@ -1621,6 +1730,73 @@ export const AdminUsersPage = () => {
             : `Deactivate ${statusConfirm?.user?.name || statusConfirm?.user?.email}? They will lose sign-in access.`
         }
       />
+
+      {/* ── Fixed Viewport Portal Dropdown Menu for User Actions ── */}
+      {actionMenuUserId && actionMenuPosition && activeMenuUser && typeof document !== 'undefined' && createPortal(
+        <div
+          className="user-action-dropdown-menu"
+          style={{
+            position: 'fixed',
+            top: `${actionMenuPosition.top}px`,
+            right: `${actionMenuPosition.right}px`,
+            width: '168px',
+            background: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '10px',
+            boxShadow: '0 10px 25px -5px rgba(15,41,66,0.14), 0 8px 10px -6px rgba(15,41,66,0.08)',
+            zIndex: 99999,
+            padding: '6px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '2px',
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* View */}
+          <MenuItem
+            icon={<Eye size={15} color="#1e5aa8" />}
+            label="View User"
+            onClick={() => { setActionMenuUserId(null); setActionMenuPosition(null); setViewUser(activeMenuUser); }}
+          />
+
+          {/* Edit */}
+          <MenuItem
+            icon={<Edit2 size={15} color="#475569" />}
+            label="Edit User"
+            onClick={() => { setActionMenuUserId(null); setActionMenuPosition(null); handleEditClick(activeMenuUser); }}
+          />
+
+          {/* Change Status */}
+          {currentUser?.id !== activeMenuUser.id && (
+            <MenuItem
+              icon={activeMenuUser.status === 'active' ? <UserX size={15} color="#b45309" /> : <UserCheck size={15} color="#15803d" />}
+              label={activeMenuUser.status === 'active' ? 'Deactivate' : 'Activate'}
+              color={activeMenuUser.status === 'active' ? '#b45309' : '#15803d'}
+              hoverBg={activeMenuUser.status === 'active' ? '#fffbeb' : '#f0fdf4'}
+              onClick={() => {
+                const isAct = activeMenuUser.status === 'active';
+                setActionMenuUserId(null);
+                setActionMenuPosition(null);
+                setStatusConfirm({ user: activeMenuUser, newStatus: isAct ? 'inactive' : 'active' });
+              }}
+            />
+          )}
+
+          {/* Divider */}
+          {currentUser?.id !== activeMenuUser.id && <div style={{ height: '1px', background: '#f1f5f9', margin: '4px 0' }} />}
+
+          {/* Delete */}
+          {currentUser?.id !== activeMenuUser.id && (
+            <MenuItem
+              icon={<Trash2 size={15} color="#dc2626" />}
+              label="Delete User"
+              danger
+              onClick={() => { setActionMenuUserId(null); setActionMenuPosition(null); setDeleteConfirmId(activeMenuUser.id); }}
+            />
+          )}
+        </div>,
+        document.body
+      )}
     </div>
   );
 };

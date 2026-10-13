@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   ShoppingBag,
   Plus,
@@ -45,13 +46,18 @@ const DEFAULT_CATEGORIES = [
 
 const cacheProductImage = (key, image) => {
   try {
-    if (/^data:image\//i.test(image || '')) {
+    if (!image || /^data:image\//i.test(image) || image.length > 2000) {
       localStorage.removeItem(key);
       return;
     }
     localStorage.setItem(key, image);
-  } catch (_) {}
+  } catch (_) {
+    try {
+      localStorage.removeItem(key);
+    } catch (_) {}
+  }
 };
+
 
 // ── SKU Generator Strategy: BO-XXXX ──────────────────────────────────────────
 const generateUniqueSku = (existingList = []) => {
@@ -160,6 +166,33 @@ export const ProductsPage = () => {
       window.removeEventListener('scroll', handleWindowChange, true);
       window.removeEventListener('resize', handleWindowChange);
     };
+  }, [actionMenuProductId]);
+
+  const selectedActionProduct = useMemo(() => {
+    if (!actionMenuProductId) return null;
+    return products.find((p) => p.id === actionMenuProductId) || null;
+  }, [actionMenuProductId, products]);
+
+  const handleToggleActionMenu = useCallback((e, row) => {
+    e.stopPropagation();
+    if (actionMenuProductId === row.id) {
+      setActionMenuProductId(null);
+      setActionMenuPosition(null);
+    } else {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const dropdownH = 155;
+      const dropdownW = 165;
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const openUp = spaceBelow < dropdownH && rect.top > dropdownH;
+      const rawRight = window.innerWidth - rect.right;
+      const clampedRight = Math.max(12, Math.min(window.innerWidth - dropdownW - 12, rawRight));
+
+      setActionMenuPosition({
+        top: openUp ? Math.max(10, rect.top - dropdownH - 6) : rect.bottom + 6,
+        right: clampedRight
+      });
+      setActionMenuProductId(row.id);
+    }
   }, [actionMenuProductId]);
 
   // ── Product Image State ───────────────────────────────────────────────────
@@ -1018,24 +1051,11 @@ export const ProductsPage = () => {
           <div className="product-action-menu-container" style={{ position: 'relative', display: 'inline-block' }}>
             <button
               type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (actionMenuProductId === row.id) {
-                  setActionMenuProductId(null);
-                  setActionMenuPosition(null);
-                } else {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const dropdownH = 145;
-                  const openUp = window.innerHeight - rect.bottom < dropdownH && rect.top > dropdownH;
-                  setActionMenuPosition({
-                    top: openUp ? rect.top - dropdownH - 6 : rect.bottom + 6,
-                    right: Math.max(16, window.innerWidth - rect.right)
-                  });
-                  setActionMenuProductId(row.id);
-                }
-              }}
+              onClick={(e) => handleToggleActionMenu(e, row)}
               title="Actions"
               aria-label="Actions menu"
+              aria-haspopup="true"
+              aria-expanded={isOpen}
               style={{
                 background: isOpen ? '#e2e8f0' : '#f8fafc',
                 border: `1px solid ${isOpen ? '#94a3b8' : '#cbd5e1'}`,
@@ -1050,101 +1070,287 @@ export const ProductsPage = () => {
             >
               <MoreVertical size={16} />
             </button>
-
-            {isOpen && actionMenuPosition && (
-              <div
-                className="product-action-dropdown-menu"
-                style={{
-                  position: 'fixed',
-                  top: `${actionMenuPosition.top}px`,
-                  right: `${actionMenuPosition.right}px`,
-                  width: '155px',
-                  background: '#ffffff',
-                  border: '1px solid #e2e8f0',
-                  borderRadius: '10px',
-                  boxShadow: '0 10px 25px -5px rgba(15,41,66,0.14), 0 8px 10px -6px rgba(15,41,66,0.08)',
-                  zIndex: 99999,
-                  padding: '6px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '2px'
-                }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                {/* View */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActionMenuProductId(null);
-                    setActionMenuPosition(null);
-                    setSelectedProduct(row);
-                  }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '10px',
-                    width: '100%', padding: '8px 10px', border: 'none',
-                    background: 'transparent', borderRadius: '6px',
-                    fontSize: '0.82rem', fontWeight: 500, color: '#0f2942',
-                    cursor: 'pointer', transition: 'background 0.15s ease', textAlign: 'left'
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = '#f0f7ff'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                >
-                  <Eye size={15} color="#1e5aa8" />
-                  <span>View Details</span>
-                </button>
-
-                {/* Edit */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActionMenuProductId(null);
-                    setActionMenuPosition(null);
-                    handleEditClick(row);
-                  }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '10px',
-                    width: '100%', padding: '8px 10px', border: 'none',
-                    background: 'transparent', borderRadius: '6px',
-                    fontSize: '0.82rem', fontWeight: 500, color: '#0f2942',
-                    cursor: 'pointer', transition: 'background 0.15s ease', textAlign: 'left'
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = '#f0f7ff'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                >
-                  <Edit2 size={15} color="#475569" />
-                  <span>Edit Product</span>
-                </button>
-
-                <div style={{ height: '1px', background: '#f1f5f9', margin: '3px 0' }} />
-
-                {/* Delete */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActionMenuProductId(null);
-                    setActionMenuPosition(null);
-                    setDeleteConfirmId(row.id);
-                  }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '10px',
-                    width: '100%', padding: '8px 10px', border: 'none',
-                    background: 'transparent', borderRadius: '6px',
-                    fontSize: '0.82rem', fontWeight: 500, color: '#dc2626',
-                    cursor: 'pointer', transition: 'background 0.15s ease', textAlign: 'left'
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = '#fef2f2'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                >
-                  <Trash2 size={15} color="#dc2626" />
-                  <span>Delete</span>
-                </button>
-              </div>
-            )}
           </div>
         );
       }
     }
   ];
+
+  // ── RESPONSIVE MOBILE CARD RENDERER ──
+  const renderMobileCard = (row) => {
+    const img = row.image_url || row.image;
+    const isMenuOpen = actionMenuProductId === row.id;
+    const stockNum = Number(row.stock || 0);
+
+    return (
+      <div
+        className="product-mobile-card"
+        onClick={() => setSelectedProduct(row)}
+        style={{
+          background: '#ffffff',
+          border: '1px solid #e2e8f0',
+          borderRadius: '14px',
+          padding: '16px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+          cursor: 'pointer',
+          position: 'relative'
+        }}
+      >
+        {/* Top Row: Thumbnail + Name/Subtitle + Status Badge + 3-Dot Menu */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', minWidth: 0, flex: 1 }}>
+            {/* Product Image Thumbnail */}
+            <div
+              style={{
+                width: '48px',
+                height: '48px',
+                borderRadius: '10px',
+                overflow: 'hidden',
+                background: '#f1f5f9',
+                border: '1px solid #cbd5e1',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0
+              }}
+            >
+              {img ? (
+                <img
+                  src={img}
+                  alt={row.name}
+                  loading="lazy"
+                  decoding="async"
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  onError={(e) => {
+                    e.target.style.display = 'none';
+                    if (e.target.nextElementSibling) e.target.nextElementSibling.style.display = 'flex';
+                  }}
+                />
+              ) : null}
+              <div
+                style={{
+                  display: img ? 'none' : 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '100%',
+                  height: '100%',
+                  color: '#1e5aa8'
+                }}
+              >
+                <Package size={22} />
+              </div>
+            </div>
+
+            {/* Name, Subtitle & SKU */}
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontWeight: 700, color: '#0f2942', fontSize: '0.94rem', lineHeight: 1.3 }}>
+                {row.name}
+              </div>
+              {row.subtitle ? (
+                <div
+                  style={{
+                    fontSize: '0.74rem',
+                    color: '#64748b',
+                    marginTop: '2px',
+                    lineHeight: 1.2,
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}
+                >
+                  {row.subtitle}
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          {/* Status Badge & 3-Dot Action Menu */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+            <AdminBadge status={row.status || (row.stock > 0 ? 'In Stock' : 'Out of Stock')} />
+
+            <div className="product-action-menu-container">
+              <button
+                type="button"
+                onClick={(e) => handleToggleActionMenu(e, row)}
+                title="Actions"
+                aria-label="Actions menu"
+                style={{
+                  background: isMenuOpen ? '#e2e8f0' : '#f8fafc',
+                  border: `1px solid ${isMenuOpen ? '#94a3b8' : '#cbd5e1'}`,
+                  borderRadius: '6px',
+                  padding: '6px 8px',
+                  cursor: 'pointer',
+                  color: '#334155',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  transition: 'all 0.15s ease'
+                }}
+              >
+                <MoreVertical size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Metadata Badges: Category & SKU */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <span
+            style={{
+              background: '#f1f5f9',
+              padding: '3px 9px',
+              borderRadius: '9999px',
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              color: '#334155',
+              border: '1px solid #e2e8f0'
+            }}
+          >
+            {row.category}
+          </span>
+
+          <span
+            style={{
+              fontSize: '0.74rem',
+              color: '#475569',
+              fontFamily: 'monospace',
+              fontWeight: 600,
+              background: '#f8fafc',
+              padding: '2px 8px',
+              borderRadius: '6px',
+              border: '1px solid #e2e8f0'
+            }}
+          >
+            SKU: {row.sku || '—'}
+          </span>
+        </div>
+
+        {/* Price & Stock Strip */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '10px 14px',
+            background: '#f8fafc',
+            borderRadius: '10px',
+            border: '1px solid #f1f5f9'
+          }}
+        >
+          <div>
+            <span style={{ fontSize: '0.70rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.04em', display: 'block' }}>
+              Retail Price
+            </span>
+            <div style={{ fontWeight: 700, color: '#15803d', fontSize: '1.05rem', marginTop: '1px' }}>
+              ${Number(row.price || 0).toFixed(2)}
+            </div>
+          </div>
+
+          <div style={{ textAlign: 'right' }}>
+            <span style={{ fontSize: '0.70rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.04em', display: 'block' }}>
+              Inventory Stock
+            </span>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '5px', marginTop: '1px' }}>
+              <span style={{ fontWeight: 700, color: stockNum < 5 ? '#b91c1c' : '#0f2942', fontSize: '0.98rem' }}>
+                {stockNum}
+              </span>
+              <span style={{ fontSize: '0.74rem', color: '#64748b' }}>units</span>
+            </div>
+          </div>
+        </div>
+
+        {/* Quick Action Touch Buttons Bar */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            gap: '8px',
+            paddingTop: '8px',
+            borderTop: '1px solid #f1f5f9'
+          }}
+        >
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedProduct(row);
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '5px',
+              padding: '7px 4px',
+              borderRadius: '7px',
+              background: '#eff6ff',
+              border: '1px solid #bfdbfe',
+              color: '#1e5aa8',
+              fontSize: '0.74rem',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+            title="View product formulation details"
+          >
+            <Eye size={13} />
+            <span>View</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleEditClick(row);
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '5px',
+              padding: '7px 4px',
+              borderRadius: '7px',
+              background: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              color: '#334155',
+              fontSize: '0.74rem',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+            title="Edit product formulation"
+          >
+            <Edit2 size={13} />
+            <span>Edit</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setDeleteConfirmId(row.id);
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '5px',
+              padding: '7px 4px',
+              borderRadius: '7px',
+              background: '#fef2f2',
+              border: '1px solid #fecaca',
+              color: '#dc2626',
+              fontSize: '0.74rem',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+            title="Delete product formulation"
+          >
+            <Trash2 size={13} />
+            <span>Delete</span>
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   // ─────────────────────────────────────────────────────────────────────────
   // RENDER
@@ -1158,7 +1364,7 @@ export const ProductsPage = () => {
           <p>Manage pharmaceutical formulations, active stock levels, pricing, and retail inventory.</p>
         </div>
 
-        <div className="admin-page-actions" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div className="admin-page-actions">
           <AdminButton
             variant="secondary"
             onClick={() => setIsCategoryModalOpen(true)}
@@ -1224,6 +1430,7 @@ export const ProductsPage = () => {
         emptyDescription="Adjust your search criteria or register a new formulation."
         emptyActionLabel="Add Product"
         onEmptyAction={handleOpenAddDrawer}
+        renderMobileCard={renderMobileCard}
       />
 
       {/* ── Add / Edit Right-Side Drawer ── */}
@@ -1238,7 +1445,7 @@ export const ProductsPage = () => {
         subtitle={editProduct ? `SKU: ${editProduct.sku}` : "Enter pharmaceutical product formulation and inventory details."}
         width="560px"
         footer={
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', width: '100%' }}>
+          <div className="admin-drawer-footer-actions">
             <AdminButton
               variant="secondary"
               disabled={actionLoading}
@@ -1451,7 +1658,7 @@ export const ProductsPage = () => {
             </div>
 
             {/* 4. Price & Inventory Stock (Side-by-side) */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+            <div className="admin-form-grid-2">
               <div className="admin-form-group">
                 <label className="admin-form-label">
                   Price ($ USD) *
@@ -1500,7 +1707,7 @@ export const ProductsPage = () => {
             </div>
 
             {/* 5. SKU (Auto-generated & read-only) & Stock Status */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+            <div className="admin-form-grid-2">
               <div className="admin-form-group">
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
                   <label className="admin-form-label" style={{ margin: 0 }}>
@@ -1587,7 +1794,7 @@ export const ProductsPage = () => {
         subtitle={`SKU: ${selectedProduct?.sku}`}
         width="540px"
         footer={
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', width: '100%' }}>
+          <div className="admin-drawer-footer-actions">
             <AdminButton
               variant="secondary"
               onClick={() => {
@@ -1928,6 +2135,66 @@ export const ProductsPage = () => {
         confirmVariant="danger"
         loading={actionLoading}
       />
+
+      {/* ── Root Portal for Product Actions Dropdown Menu ── */}
+      {actionMenuProductId && actionMenuPosition && selectedActionProduct && typeof document !== 'undefined' && createPortal(
+        <div
+          className="product-action-dropdown-menu"
+          style={{
+            position: 'fixed',
+            top: `${actionMenuPosition.top}px`,
+            right: `${actionMenuPosition.right}px`,
+            width: '165px',
+            zIndex: 99999
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* View Details */}
+          <button
+            type="button"
+            className="product-action-item item-view"
+            onClick={() => {
+              setActionMenuProductId(null);
+              setActionMenuPosition(null);
+              setSelectedProduct(selectedActionProduct);
+            }}
+          >
+            <Eye size={15} color="#1e5aa8" />
+            <span>View Details</span>
+          </button>
+
+          {/* Edit Product */}
+          <button
+            type="button"
+            className="product-action-item"
+            onClick={() => {
+              setActionMenuProductId(null);
+              setActionMenuPosition(null);
+              handleEditClick(selectedActionProduct);
+            }}
+          >
+            <Edit2 size={15} color="#475569" />
+            <span>Edit Product</span>
+          </button>
+
+          <div style={{ height: '1px', background: '#f1f5f9', margin: '3px 0' }} />
+
+          {/* Delete Product */}
+          <button
+            type="button"
+            className="product-action-item item-danger"
+            onClick={() => {
+              setActionMenuProductId(null);
+              setActionMenuPosition(null);
+              setDeleteConfirmId(selectedActionProduct.id);
+            }}
+          >
+            <Trash2 size={15} color="#dc2626" />
+            <span>Delete</span>
+          </button>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };

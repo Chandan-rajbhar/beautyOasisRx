@@ -1687,8 +1687,8 @@
   }
 
   .admin-drawer-content {
-    width: 100vw;
-    max-width: 100vw;
+    width: 100vw !important;
+    max-width: 100vw !important;
   }
 
   .admin-drawer-header {
@@ -3547,5 +3547,672 @@
   box-shadow: 0 6px 16px rgba(15, 41, 66, 0.08);
 }
 
+/* ─────────────────────────────────────────────────────────────
+   APPOINTMENTS MODULE RESPONSIVE STYLES
+   ───────────────────────────────────────────────────────────── */
+
+.appointments-tabs-container {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid #e2e8f0;
+  padding-bottom: 12px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.appointments-tabs-container::-webkit-scrollbar {
+  display: none;
+}
+
+.appointments-tab-pill {
+  white-space: nowrap;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.appointment-form-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 540px) {
+  .appointment-form-grid-2 {
+    grid-template-columns: 1fr !important;
+    gap: 12px;
+  }
+}
+
+.appointment-details-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  font-size: 0.84rem;
+}
+
+@media (max-width: 480px) {
+  .appointment-details-grid-2 {
+    grid-template-columns: 1fr !important;
+    gap: 10px;
+  }
+}
+
+.admin-drawer-footer-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 480px) {
+  .admin-drawer-footer-actions {
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .admin-drawer-footer-actions button,
+  .admin-drawer-footer-actions .admin-btn {
+    width: 100% !important;
+    justify-content: center !important;
+  }
+}
+
+.appointment-mobile-card {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.appointment-mobile-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 12px rgba(15, 41, 66, 0.08);
+}
+
+@media (max-width: 768px) {
+  .admin-filter-group {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    width: 100% !important;
+    gap: 8px !important;
+  }
+
+  .admin-filter-group > div {
+    flex: 1 1 180px !important;
+    min-width: 140px !important;
+    width: auto !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .admin-filter-group > div {
+    flex: 1 1 100% !important;
+    width: 100% !important;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   APPOINTMENT TIME MODULE RESPONSIVE STYLES
+   ───────────────────────────────────────────────────────────── */
+
+.appointment-times-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+.appointment-times-stat-card {
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.appointment-times-stat-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(15, 41, 66, 0.06);
+}
+
+.appointment-times-stat-number {
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.appointment-times-stat-label {
+  font-size: 0.78rem;
+  color: #64748b;
+  font-weight: 500;
+}
+
+@media (max-width: 640px) {
+  .appointment-times-stats-grid {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+
+  .appointment-times-stat-card {
+    padding: 12px 6px !important;
+    align-items: center;
+    text-align: center;
+    border-radius: 10px;
+  }
+
+  .appointment-times-stat-number {
+    font-size: 1.35rem !important;
+  }
+
+  .appointment-times-stat-label {
+    font-size: 0.68rem !important;
+    line-height: 1.2;
+  }
+}
+
+.appt-time-mobile-card {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.appt-time-mobile-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 12px rgba(15, 41, 66, 0.08);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   PATIENTS / CLIENTS MODULE RESPONSIVE STYLES
+   ───────────────────────────────────────────────────────────── */
+
+.patient-mobile-card {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.patient-mobile-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 14px rgba(15, 41, 66, 0.08);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   CLINICAL SERVICES / TREATMENTS MODULE RESPONSIVE STYLES
+   ───────────────────────────────────────────────────────────── */
+
+.service-mobile-card {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.service-mobile-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 14px rgba(15, 41, 66, 0.08);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   STAFF & CLINICAL PROVIDERS MODULE RESPONSIVE STYLES
+   ───────────────────────────────────────────────────────────── */
+
+.clinician-mobile-card {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.clinician-mobile-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 14px rgba(15, 41, 66, 0.08);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   CLINICAL APOTHECARY PRODUCTS MODULE RESPONSIVE STYLES
+   ───────────────────────────────────────────────────────────── */
+
+.product-mobile-card {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.product-mobile-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 14px rgba(15, 41, 66, 0.08);
+}
+
+.product-action-dropdown-menu {
+  position: fixed;
+  width: 165px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 12px 30px -4px rgba(15, 41, 66, 0.14), 0 6px 12px -4px rgba(15, 41, 66, 0.08);
+  z-index: 99999;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: productMenuFade 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  box-sizing: border-box;
+}
+
+@keyframes productMenuFade {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.product-action-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: #334155;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  text-align: left;
+  user-select: none;
+}
+
+.product-action-item:hover {
+  background: #f1f5f9;
+  color: #0f172a;
+}
+
+.product-action-item.item-view:hover {
+  background: #eff6ff;
+  color: #1e5aa8;
+}
+
+.product-action-item.item-danger {
+  color: #dc2626;
+}
+
+.product-action-item.item-danger:hover {
+  background: #fee2e2;
+  color: #b91c1c;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   COUPONS, ORDERS & PAYMENTS MODULES RESPONSIVE STYLES
+   ───────────────────────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .coupon-stat-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 10px !important;
+    margin-bottom: 16px !important;
+  }
+  .coupon-stat-card {
+    padding: 12px 10px !important;
+    gap: 10px !important;
+  }
+  .coupon-stat-card > div:first-child {
+    width: 36px !important;
+    height: 36px !important;
+    border-radius: 8px !important;
+  }
+  .coupon-stat-card > div:first-child svg {
+    width: 18px !important;
+    height: 18px !important;
+  }
+  .coupon-stat-card > div:last-child span {
+    font-size: 0.68rem !important;
+  }
+  .coupon-stat-card > div:last-child div {
+    font-size: 1.18rem !important;
+  }
+}
+
+@media (max-width: 360px) {
+  .coupon-stat-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+.coupon-mobile-card,
+.order-mobile-card,
+.payment-mobile-card {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.coupon-mobile-card:hover,
+.order-mobile-card:hover,
+.payment-mobile-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 14px rgba(15, 41, 66, 0.08);
+}
+
+.coupon-form-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+@media (max-width: 520px) {
+  .coupon-form-grid-2 {
+    grid-template-columns: 1fr !important;
+    gap: 12px;
+  }
+}
+
+.coupon-metadata-grid,
+.payment-specs-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 480px) {
+  .coupon-metadata-grid,
+  .payment-specs-grid {
+    grid-template-columns: 1fr !important;
+    gap: 10px;
+  }
+}
+
+/* Payments Responsive KPI Grid */
+@media (max-width: 640px) {
+  .payment-stats-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 10px !important;
+    margin-bottom: 16px !important;
+  }
+  .payment-stats-grid .admin-card {
+    padding: 12px 12px !important;
+    border-radius: 12px !important;
+  }
+  .payment-stats-grid .admin-card-title {
+    font-size: 0.72rem !important;
+    line-height: 1.2 !important;
+  }
+  .payment-stats-grid .admin-card-icon-wrap {
+    width: 32px !important;
+    height: 32px !important;
+    border-radius: 8px !important;
+  }
+  .payment-stats-grid .admin-card-icon-wrap svg {
+    width: 16px !important;
+    height: 16px !important;
+  }
+  .payment-stats-grid .admin-card-value {
+    font-size: 1.22rem !important;
+    margin: 4px 0 !important;
+  }
+  .payment-stats-grid .admin-card-meta {
+    font-size: 0.68rem !important;
+    line-height: 1.2 !important;
+  }
+}
+
+@media (max-width: 360px) {
+  .payment-stats-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* Orders & Payments Action Menus */
+.order-action-dropdown-menu,
+.payment-action-dropdown-menu {
+  position: fixed;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 12px 30px -4px rgba(15, 41, 66, 0.16), 0 6px 14px -4px rgba(15, 41, 66, 0.08);
+  z-index: 99999;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: adminDropdownFade 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  box-sizing: border-box;
+}
+
+@keyframes adminDropdownFade {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+.order-action-dropdown-menu button,
+.payment-action-dropdown-menu button {
+  font-family: inherit;
+}
+
+/* Orders Line Items in Add/Edit Modal */
+.order-line-item-grid {
+  display: grid;
+  grid-template-columns: 2.5fr 1fr 1fr 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
+@media (max-width: 560px) {
+  .order-line-item-grid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px !important;
+  }
+  .order-line-item-grid > div:first-child {
+    grid-column: span 2 !important;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   INQUIRIES, WEBSITE CONTENT, NOTIFICATIONS & USER MANAGEMENT
+   RESPONSIVE STYLES
+   ───────────────────────────────────────────────────────────── */
+
+.inquiry-mobile-card,
+.user-mobile-card {
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.inquiry-mobile-card:hover,
+.user-mobile-card:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 4px 14px rgba(15, 41, 66, 0.08);
+}
+
+/* User Action Dropdown Menu */
+.user-action-dropdown-menu {
+  position: fixed;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  box-shadow: 0 12px 30px -4px rgba(15, 41, 66, 0.16), 0 6px 14px -4px rgba(15, 41, 66, 0.08);
+  z-index: 99999;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: adminDropdownFade 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+  box-sizing: border-box;
+}
+
+.user-action-dropdown-menu button {
+  font-family: inherit;
+}
+
+/* CMS Website Content Responsive Navigation & Grids */
+.cms-preview-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 16px;
+  background: rgba(212, 175, 114, 0.08);
+  border: 1px solid rgba(212, 175, 114, 0.35);
+  border-radius: 8px;
+  color: #92742a;
+  text-decoration: none;
+  font-size: 0.83rem;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: all 0.2s ease;
+}
+
+.cms-preview-btn:hover {
+  background: rgba(212, 175, 114, 0.16);
+  color: #7a6120;
+}
+
+.cms-tabs-container {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 24px;
+  overflow-x: auto;
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+
+.cms-tabs-container::-webkit-scrollbar {
+  display: none;
+}
+
+.cms-tab-button {
+  padding: 10px 18px;
+  font-size: 0.88rem;
+  font-weight: 500;
+  color: #64748b;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.cms-tab-button:hover {
+  color: #1e5aa8;
+}
+
+.cms-tab-button.active {
+  font-weight: 700;
+  color: #1e5aa8;
+  border-bottom-color: #1e5aa8;
+}
+
+.cms-testimonials-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 768px) {
+  .cms-full-width-col {
+    grid-column: span 1 !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .cms-preview-btn {
+    padding: 8px 12px;
+    font-size: 0.8rem;
+    justify-content: center;
+  }
+}
+
+/* Notifications Module Responsive Tabs & Cards */
+.notifications-tabs-container {
+  display: flex;
+  gap: 8px;
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 20px;
+  overflow-x: auto;
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+
+.notifications-tabs-container::-webkit-scrollbar {
+  display: none;
+}
+
+.notifications-tab-button {
+  padding: 9px 16px;
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: #64748b;
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.notifications-tab-button:hover {
+  color: #1e5aa8;
+}
+
+.notifications-tab-button.active {
+  font-weight: 700;
+  color: #1e5aa8;
+  border-bottom-color: #1e5aa8;
+}
+
+.notification-list-card {
+  transition: all 0.2s ease;
+}
+
+.notification-list-card:hover {
+  box-shadow: 0 4px 14px rgba(15, 41, 66, 0.08);
+}
+
+@media (max-width: 600px) {
+  .notification-list-card {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 12px !important;
+    padding: 14px 14px !important;
+  }
+
+  .notification-card-actions {
+    width: 100% !important;
+    justify-content: space-between !important;
+    padding-top: 10px !important;
+    border-top: 1px solid rgba(0, 0, 0, 0.05) !important;
+  }
+}
+
+/* Send Notification Modal Responsive Layout */
+@media (max-width: 520px) {
+  .send-notif-recipient-modes {
+    grid-template-columns: 1fr !important;
+    gap: 6px !important;
+  }
+
+  .send-notif-footer-actions {
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+  }
+
+  .send-notif-btn-group {
+    width: 100% !important;
+  }
+
+  .send-notif-btn-group button {
+    flex: 1 !important;
+    justify-content: center !important;
+  }
+}
 
 

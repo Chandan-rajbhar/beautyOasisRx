@@ -348,7 +348,7 @@ export const AddEditInquiryDrawer = ({
       }
       width="620px"
       footer={
-        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', width: '100%' }}>
+        <div className="admin-drawer-footer-actions">
           <AdminButton variant="secondary" onClick={onClose} disabled={isSubmitting}>
             Cancel
           </AdminButton>

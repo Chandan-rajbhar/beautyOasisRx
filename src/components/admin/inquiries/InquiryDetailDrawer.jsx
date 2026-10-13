@@ -75,7 +75,7 @@ export const InquiryDetailDrawer = ({
       subtitle={`Ticket #${ticketId} — ${inquiry.name}`}
       width="560px"
       footer={
-        <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', width: '100%' }}>
+        <div className="admin-drawer-footer-actions">
           <AdminButton
             variant="secondary"
             onClick={() => {

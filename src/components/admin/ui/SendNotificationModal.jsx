@@ -21,6 +21,13 @@ import {
 import toast from 'react-hot-toast';
 import { notificationService } from '../../../services/notificationService';
 import { supabase } from '../../../lib/supabaseClient';
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem
+} from '../../ui/select';
 
 export const SendNotificationModal = ({ isOpen, onClose, onNotificationSent }) => {
   const [recipientType, setRecipientType] = useState('specific_user'); // 'specific_user', 'role', 'all_users'
@@ -118,6 +125,11 @@ export const SendNotificationModal = ({ isOpen, onClose, onNotificationSent }) =
       r => r.name.toLowerCase().includes(q) || r.email.toLowerCase().includes(q) || r.type.toLowerCase().includes(q)
     );
   }, [combinedRecipients, searchQuery]);
+
+  const selectedRecipient = useMemo(() => {
+    if (!selectedUserId) return null;
+    return combinedRecipients.find(r => String(r.id) === String(selectedUserId));
+  }, [combinedRecipients, selectedUserId]);
 
   // Selected recipient device count
   const recipientDeviceCount = useMemo(() => {
@@ -431,7 +443,7 @@ export const SendNotificationModal = ({ isOpen, onClose, onNotificationSent }) =
               <label style={{ display: 'block', fontSize: '0.84rem', fontWeight: 600, color: '#0f2942', marginBottom: '8px' }}>
                 Target Recipients
               </label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+              <div className="send-notif-recipient-modes" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
                 {[
                   { id: 'specific_user', label: 'Specific User', icon: User },
                   { id: 'role', label: 'By User Role', icon: Shield },
@@ -489,27 +501,79 @@ export const SendNotificationModal = ({ isOpen, onClose, onNotificationSent }) =
                     }}
                   />
                 </div>
-                <select
+                <Select
                   value={selectedUserId}
-                  onChange={(e) => setSelectedUserId(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '10px 12px',
-                    borderRadius: '8px',
-                    border: '1px solid #cbd5e1',
-                    fontSize: '0.86rem',
-                    background: '#ffffff',
-                    color: '#0f2942'
-                  }}
-                  required
+                  onValueChange={(val) => setSelectedUserId(val)}
                 >
-                  <option value="">-- Choose Recipient ({filteredRecipients.length} available) --</option>
-                  {filteredRecipients.map(r => (
-                    <option key={r.id} value={r.id}>
-                      {r.name} ({r.email}) — [{r.type}] {r.hasDevice ? '📱 Registered' : '⚠️ No Device'}
-                    </option>
-                  ))}
-                </select>
+                  <SelectTrigger
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                      fontSize: '0.86rem',
+                      background: '#ffffff',
+                      color: selectedUserId ? '#0f2942' : '#64748b',
+                      minHeight: '42px',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
+                    }}
+                  >
+                    <SelectValue placeholder={`-- Choose Recipient (${filteredRecipients.length} available) --`}>
+                      {selectedRecipient ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          <span style={{ fontWeight: 600, color: '#0f2942' }}>{selectedRecipient.name}</span>
+                          <span style={{ color: '#64748b', fontSize: '0.82rem' }}>({selectedRecipient.email})</span>
+                          <span
+                            style={{
+                              fontSize: '0.72rem',
+                              padding: '1px 6px',
+                              borderRadius: '4px',
+                              background: selectedRecipient.type === 'Patient' ? '#f0fdf4' : '#eff6ff',
+                              color: selectedRecipient.type === 'Patient' ? '#166534' : '#1e40af',
+                              fontWeight: 600
+                            }}
+                          >
+                            [{selectedRecipient.type}]
+                          </span>
+                          <span style={{ fontSize: '0.78rem', color: selectedRecipient.hasDevice ? '#15803d' : '#b45309', fontWeight: 600 }}>
+                            {selectedRecipient.hasDevice ? '📱 Registered' : '⚠️ No Device'}
+                          </span>
+                        </span>
+                      ) : null}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent side="bottom" style={{ maxHeight: '240px', overflowY: 'auto' }}>
+                    {filteredRecipients.length > 0 ? (
+                      filteredRecipients.map(r => (
+                        <SelectItem key={r.id} value={r.id}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
+                            <span style={{ fontWeight: 600, color: '#0f2942' }}>{r.name}</span>
+                            <span style={{ fontSize: '0.8rem', color: '#64748b' }}>({r.email})</span>
+                            <span
+                              style={{
+                                fontSize: '0.7rem',
+                                padding: '1px 6px',
+                                borderRadius: '4px',
+                                background: r.type === 'Patient' ? '#f0fdf4' : '#eff6ff',
+                                color: r.type === 'Patient' ? '#166534' : '#1e40af',
+                                fontWeight: 600
+                              }}
+                            >
+                              [{r.type}]
+                            </span>
+                            <span style={{ marginLeft: 'auto', fontSize: '0.76rem', color: r.hasDevice ? '#15803d' : '#b45309', fontWeight: 600 }}>
+                              {r.hasDevice ? '📱 Registered' : '⚠️ No Device'}
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))
+                    ) : (
+                      <div style={{ padding: '12px', textAlign: 'center', color: '#94a3b8', fontSize: '0.82rem' }}>
+                        No recipients match "{searchQuery}"
+                      </div>
+                    )}
+                  </SelectContent>
+                </Select>
                 <div style={{ marginTop: '4px', fontSize: '0.75rem', color: recipientDeviceCount > 0 ? '#15803d' : '#b45309' }}>
                   {selectedUserId ? (
                     recipientDeviceCount > 0
@@ -525,21 +589,52 @@ export const SendNotificationModal = ({ isOpen, onClose, onNotificationSent }) =
                 <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: '#334155', marginBottom: '6px' }}>
                   Select Authorized Role
                 </label>
-                <select
+                <Select
                   value={selectedRole}
-                  onChange={(e) => setSelectedRole(e.target.value)}
-                  style={{
-                    width: '100%',
-                    padding: '10px 12px',
-                    borderRadius: '8px',
-                    border: '1px solid #cbd5e1',
-                    fontSize: '0.86rem',
-                    background: '#ffffff'
-                  }}
+                  onValueChange={(val) => setSelectedRole(val)}
                 >
-                  <option value="patient">All Patients / Clients ({patients.length} registered)</option>
-                  <option value="super_admin">Super Admins Only ({users.length} registered)</option>
-                </select>
+                  <SelectTrigger
+                    style={{
+                      width: '100%',
+                      padding: '10px 12px',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                      fontSize: '0.86rem',
+                      background: '#ffffff',
+                      color: '#0f2942',
+                      minHeight: '42px',
+                      boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
+                    }}
+                  >
+                    <SelectValue placeholder="Select Authorized Role">
+                      {selectedRole === 'super_admin' ? (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                          <Shield size={15} color="#7c3aed" />
+                          <span>Super Admins Only ({users.length} registered)</span>
+                        </span>
+                      ) : (
+                        <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                          <Users size={15} color="#1e5aa8" />
+                          <span>All Patients / Clients ({patients.length} registered)</span>
+                        </span>
+                      )}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent side="bottom" style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                    <SelectItem value="patient">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Users size={15} color="#1e5aa8" />
+                        <span style={{ fontWeight: 500 }}>All Patients / Clients ({patients.length} registered)</span>
+                      </div>
+                    </SelectItem>
+                    <SelectItem value="super_admin">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Shield size={15} color="#7c3aed" />
+                        <span style={{ fontWeight: 500 }}>Super Admins Only ({users.length} registered)</span>
+                      </div>
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
                 <div style={{ marginTop: '4px', fontSize: '0.75rem', color: '#64748b' }}>
                   Targeting ~{recipientDeviceCount} registered mobile devices in this role.
                 </div>
@@ -740,13 +835,15 @@ export const SendNotificationModal = ({ isOpen, onClose, onNotificationSent }) =
 
             {/* Actions */}
             <div
+              className="send-notif-footer-actions"
               style={{
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
                 paddingTop: '12px',
                 borderTop: '1px solid #e2e8f0',
-                marginTop: '6px'
+                marginTop: '6px',
+                gap: '10px'
               }}
             >
               <button
@@ -764,7 +861,7 @@ export const SendNotificationModal = ({ isOpen, onClose, onNotificationSent }) =
                 Clear Form
               </button>
 
-              <div style={{ display: 'flex', gap: '10px' }}>
+              <div className="send-notif-btn-group" style={{ display: 'flex', gap: '10px' }}>
                 <button
                   type="button"
                   onClick={onClose}

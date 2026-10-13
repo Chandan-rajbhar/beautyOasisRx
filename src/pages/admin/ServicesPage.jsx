@@ -198,6 +198,28 @@ export const ServicesPage = () => {
     };
   }, [actionMenuTreatmentId]);
 
+  const handleToggleActionMenu = useCallback((e, row) => {
+    e.stopPropagation();
+    if (actionMenuTreatmentId === row.id) {
+      setActionMenuTreatmentId(null);
+      setActionMenuPosition(null);
+    } else {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const dropdownHeight = 185;
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const openUpward = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
+      setActionMenuPosition({
+        top: openUpward ? Math.max(10, rect.top - dropdownHeight - 6) : rect.bottom + 6,
+        right: Math.max(16, window.innerWidth - rect.right)
+      });
+      setActionMenuTreatmentId(row.id);
+    }
+  }, [actionMenuTreatmentId]);
+
+  const selectedActionTreatment = useMemo(() => {
+    return treatments.find(t => t.id === actionMenuTreatmentId) || null;
+  }, [treatments, actionMenuTreatmentId]);
+
   // ─────────────────────────────────────────────────────────────
   // 1. FETCH TREATMENT CATEGORIES (treatment_categories table)
   //    NOTE: This is intentionally separate from the 'categories'
@@ -1704,23 +1726,7 @@ export const ServicesPage = () => {
             <button
               type="button"
               className={`protocol-action-trigger-btn ${isOpen ? 'active' : ''}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (actionMenuTreatmentId === row.id) {
-                  setActionMenuTreatmentId(null);
-                  setActionMenuPosition(null);
-                } else {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const dropdownHeight = 185;
-                  const spaceBelow = window.innerHeight - rect.bottom;
-                  const openUpward = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
-                  setActionMenuPosition({
-                    top: openUpward ? Math.max(10, rect.top - dropdownHeight - 6) : rect.bottom + 6,
-                    right: Math.max(16, window.innerWidth - rect.right)
-                  });
-                  setActionMenuTreatmentId(row.id);
-                }
-              }}
+              onClick={(e) => handleToggleActionMenu(e, row)}
               title="Treatment Actions"
               aria-label="Treatment actions menu"
               aria-haspopup="true"
@@ -1728,93 +1734,304 @@ export const ServicesPage = () => {
             >
               <MoreVertical size={16} />
             </button>
-
-            {isOpen && actionMenuPosition && typeof document !== 'undefined' && createPortal(
-              <div
-                className="protocol-action-dropdown-menu"
-                style={{
-                  position: 'fixed',
-                  top: `${actionMenuPosition.top}px`,
-                  right: `${actionMenuPosition.right}px`,
-                  width: '190px',
-                  zIndex: 99999
-                }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                {/* 1. View */}
-                <button
-                  type="button"
-                  className="protocol-action-item item-view"
-                  onClick={() => {
-                    setActionMenuTreatmentId(null);
-                    setActionMenuPosition(null);
-                    setSelectedTreatment(row);
-                  }}
-                >
-                  <Eye size={15} color="#1e5aa8" />
-                  <span>View Details</span>
-                </button>
-
-                {/* 2. Edit */}
-                <button
-                  type="button"
-                  className="protocol-action-item"
-                  onClick={() => {
-                    setActionMenuTreatmentId(null);
-                    setActionMenuPosition(null);
-                    handleOpenEditDrawer(row);
-                  }}
-                >
-                  <Edit2 size={15} color="#475569" />
-                  <span>Edit Protocol</span>
-                </button>
-
-                {/* 3. Activate / Deactivate Toggle */}
-                <button
-                  type="button"
-                  className={`protocol-action-item ${row.status === 'Active' ? 'item-status-active' : 'item-status-inactive'}`}
-                  onClick={() => {
-                    setActionMenuTreatmentId(null);
-                    setActionMenuPosition(null);
-                    handleQuickToggleStatus(row);
-                  }}
-                >
-                  {row.status === 'Active' ? (
-                    <>
-                      <XCircle size={15} color="#d97706" />
-                      <span>Mark as Inactive</span>
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 size={15} color="#10b981" />
-                      <span>Mark as Active</span>
-                    </>
-                  )}
-                </button>
-
-                <div className="protocol-action-separator" />
-
-                {/* 4. Delete */}
-                <button
-                  type="button"
-                  className="protocol-action-item item-danger"
-                  onClick={() => {
-                    setActionMenuTreatmentId(null);
-                    setActionMenuPosition(null);
-                    setDeleteConfirmTreatment(row);
-                  }}
-                >
-                  <Trash2 size={15} color="#dc2626" />
-                  <span>Delete Protocol</span>
-                </button>
-              </div>,
-              document.body
-            )}
           </div>
         );
       }
     }
   ];
+
+  // ── RESPONSIVE MOBILE CARD RENDERER ──
+  const renderMobileCard = (row) => {
+    const rowImages = Array.isArray(row.images) ? row.images : [];
+    const primaryImg = rowImages.find(img => img.sequence === 1) || rowImages[0];
+    const imageUrl = primaryImg?.url || row.image_url || row.image || null;
+    const totalCount = rowImages.length > 0 ? rowImages.length : (imageUrl ? 1 : 0);
+    const isMenuOpen = actionMenuTreatmentId === row.id;
+    const isActive = row.status === 'Active';
+
+    return (
+      <div
+        className="service-mobile-card"
+        onClick={() => setSelectedTreatment(row)}
+        style={{
+          background: '#ffffff',
+          border: '1px solid #e2e8f0',
+          borderRadius: '14px',
+          padding: '16px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+          cursor: 'pointer',
+          position: 'relative'
+        }}
+      >
+        {/* Top Section: Thumbnail + Title/Tagline + Status + 3-Dot Menu */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', minWidth: 0, flex: 1 }}>
+            {/* Thumbnail */}
+            <div
+              style={{
+                position: 'relative',
+                width: '48px',
+                height: '48px',
+                borderRadius: '10px',
+                overflow: 'hidden',
+                flexShrink: 0,
+                background: '#f1f5f9',
+                border: '1px solid #e2e8f0',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center'
+              }}
+            >
+              {imageUrl ? (
+                <img
+                  src={imageUrl}
+                  alt={row.protocol_title}
+                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                    if (e.currentTarget.nextElementSibling) {
+                      e.currentTarget.nextElementSibling.style.display = 'flex';
+                    }
+                  }}
+                />
+              ) : null}
+              <div
+                style={{
+                  color: '#94a3b8',
+                  display: imageUrl ? 'none' : 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '100%',
+                  height: '100%'
+                }}
+              >
+                <ImageIcon size={20} />
+              </div>
+
+              {/* Multi-image count overlay badge */}
+              {totalCount > 1 && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    bottom: '2px',
+                    right: '2px',
+                    background: 'rgba(15, 23, 42, 0.85)',
+                    color: '#ffffff',
+                    fontSize: '0.62rem',
+                    fontWeight: 700,
+                    padding: '1px 3.5px',
+                    borderRadius: '4px',
+                    lineHeight: 1,
+                    letterSpacing: '-0.2px',
+                    backdropFilter: 'blur(2px)'
+                  }}
+                  title={`${totalCount} treatment photos`}
+                >
+                  +{totalCount - 1}
+                </div>
+              )}
+            </div>
+
+            {/* Title & Tagline */}
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontWeight: 700, color: '#0f2942', fontSize: '0.96rem', lineHeight: 1.3 }}>
+                {row.protocol_title}
+              </div>
+              {row.tagline && (
+                <div
+                  style={{
+                    fontSize: '0.76rem',
+                    color: '#64748b',
+                    marginTop: '2px',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}
+                >
+                  {row.tagline}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Status Badge & 3-Dot Action Button */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleQuickToggleStatus(row);
+              }}
+              title="Click to toggle Active / Inactive"
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 0 }}
+            >
+              <AdminBadge status={row.status || 'Active'} />
+            </button>
+
+            <div className="protocol-action-menu-container">
+              <button
+                type="button"
+                className={`protocol-action-trigger-btn ${isMenuOpen ? 'active' : ''}`}
+                onClick={(e) => handleToggleActionMenu(e, row)}
+                title="Treatment Actions"
+                aria-label="Treatment actions menu"
+              >
+                <MoreVertical size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Metadata row: Category, Duration, Price */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '8px',
+            background: '#f8fafc',
+            padding: '8px 12px',
+            borderRadius: '8px',
+            border: '1px solid #f1f5f9',
+            fontSize: '0.82rem',
+            flexWrap: 'wrap'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <span
+              style={{
+                background: '#ffffff',
+                border: '1px solid #e2e8f0',
+                padding: '3px 8px',
+                borderRadius: '9999px',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                color: '#334155'
+              }}
+            >
+              {row.category || 'General'}
+            </span>
+
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', color: '#64748b', fontSize: '0.78rem' }}>
+              <Clock size={12} color="#94a3b8" />
+              <span>{row.duration || '60 Mins'}</span>
+            </div>
+          </div>
+
+          <div style={{ fontWeight: 700, color: '#15803d', fontSize: '0.98rem' }}>
+            ${Number(row.price || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+          </div>
+        </div>
+
+        {/* Action Shortcut Buttons */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            paddingTop: '6px',
+            borderTop: '1px solid #f1f5f9'
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* View */}
+          <button
+            type="button"
+            onClick={() => setSelectedTreatment(row)}
+            style={{
+              flex: 1,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '5px',
+              padding: '7px 10px',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+              background: '#ffffff',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              color: '#1e5aa8',
+              cursor: 'pointer'
+            }}
+          >
+            <Eye size={13} />
+            <span>View</span>
+          </button>
+
+          {/* Edit */}
+          <button
+            type="button"
+            onClick={() => handleOpenEditDrawer(row)}
+            style={{
+              flex: 1,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '5px',
+              padding: '7px 10px',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+              background: '#ffffff',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              color: '#334155',
+              cursor: 'pointer'
+            }}
+          >
+            <Edit2 size={13} />
+            <span>Edit</span>
+          </button>
+
+          {/* Toggle Status */}
+          <button
+            type="button"
+            onClick={() => handleQuickToggleStatus(row)}
+            style={{
+              flex: 1,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '5px',
+              padding: '7px 10px',
+              borderRadius: '8px',
+              border: `1px solid ${isActive ? '#fde68a' : '#bbf7d0'}`,
+              background: isActive ? '#fffbeb' : '#f0fdf4',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              color: isActive ? '#92400e' : '#166534',
+              cursor: 'pointer'
+            }}
+          >
+            {isActive ? <XCircle size={13} /> : <CheckCircle2 size={13} />}
+            <span>{isActive ? 'Deactivate' : 'Activate'}</span>
+          </button>
+
+          {/* Delete */}
+          <button
+            type="button"
+            onClick={() => setDeleteConfirmTreatment(row)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '7px 10px',
+              borderRadius: '8px',
+              border: '1px solid #fecaca',
+              background: '#fff1f2',
+              color: '#be123c',
+              cursor: 'pointer'
+            }}
+            title="Delete protocol"
+            aria-label="Delete protocol"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div>
@@ -1886,6 +2103,7 @@ export const ServicesPage = () => {
         emptyDescription="Adjust your search criteria or register a new treatment protocol."
         emptyActionLabel="Add Treatment Protocol"
         onEmptyAction={handleOpenAddDrawer}
+        renderMobileCard={renderMobileCard}
       />
 
       {/* ══════════════════════════════════════════════════════════════ */}
@@ -1898,7 +2116,7 @@ export const ServicesPage = () => {
         subtitle="Configure clinician credentials, protocol pricing, and duration."
         width="660px"
         footer={
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', width: '100%' }}>
+          <div className="admin-drawer-footer-actions">
             <AdminButton
               variant="secondary"
               disabled={submitting}
@@ -2545,7 +2763,7 @@ export const ServicesPage = () => {
         subtitle={selectedTreatment?.protocol_title}
         width="560px"
         footer={
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', width: '100%' }}>
+          <div className="admin-drawer-footer-actions">
             <AdminButton
               variant="secondary"
               onClick={() => {
@@ -3358,6 +3576,89 @@ export const ServicesPage = () => {
           </div>
         )}
       </AdminModal>
+
+      {/* ── Root-level Treatment Actions Dropdown (Portal) ── */}
+      {actionMenuTreatmentId && actionMenuPosition && selectedActionTreatment && createPortal(
+        <div
+          className="protocol-action-dropdown-menu"
+          style={{
+            position: 'fixed',
+            top: `${actionMenuPosition.top}px`,
+            right: `${actionMenuPosition.right}px`,
+            width: '190px',
+            zIndex: 99999
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* 1. View */}
+          <button
+            type="button"
+            className="protocol-action-item item-view"
+            onClick={() => {
+              setActionMenuTreatmentId(null);
+              setActionMenuPosition(null);
+              setSelectedTreatment(selectedActionTreatment);
+            }}
+          >
+            <Eye size={15} color="#1e5aa8" />
+            <span>View Details</span>
+          </button>
+
+          {/* 2. Edit */}
+          <button
+            type="button"
+            className="protocol-action-item"
+            onClick={() => {
+              setActionMenuTreatmentId(null);
+              setActionMenuPosition(null);
+              handleOpenEditDrawer(selectedActionTreatment);
+            }}
+          >
+            <Edit2 size={15} color="#475569" />
+            <span>Edit Protocol</span>
+          </button>
+
+          {/* 3. Activate / Deactivate Toggle */}
+          <button
+            type="button"
+            className={`protocol-action-item ${selectedActionTreatment.status === 'Active' ? 'item-status-active' : 'item-status-inactive'}`}
+            onClick={() => {
+              setActionMenuTreatmentId(null);
+              setActionMenuPosition(null);
+              handleQuickToggleStatus(selectedActionTreatment);
+            }}
+          >
+            {selectedActionTreatment.status === 'Active' ? (
+              <>
+                <XCircle size={15} color="#d97706" />
+                <span>Mark as Inactive</span>
+              </>
+            ) : (
+              <>
+                <CheckCircle2 size={15} color="#10b981" />
+                <span>Mark as Active</span>
+              </>
+            )}
+          </button>
+
+          <div className="protocol-action-separator" />
+
+          {/* 4. Delete */}
+          <button
+            type="button"
+            className="protocol-action-item item-danger"
+            onClick={() => {
+              setActionMenuTreatmentId(null);
+              setActionMenuPosition(null);
+              setDeleteConfirmTreatment(selectedActionTreatment);
+            }}
+          >
+            <Trash2 size={15} color="#dc2626" />
+            <span>Delete Protocol</span>
+          </button>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };

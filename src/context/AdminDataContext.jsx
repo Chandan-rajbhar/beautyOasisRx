@@ -141,7 +141,11 @@ export const AdminDataProvider = ({ children }) => {
   }, []);
 
   const deleteItem = useCallback(async (collection, id) => {
-    return supabaseDataService.deleteItem(collection, id);
+    const res = await supabaseDataService.deleteItem(collection, id);
+    if (collection === 'notifications') {
+      setNotifications((prev) => (Array.isArray(prev) ? prev.filter((n) => String(n.id) !== String(id)) : []));
+    }
+    return res;
   }, []);
 
   // Notification helpers

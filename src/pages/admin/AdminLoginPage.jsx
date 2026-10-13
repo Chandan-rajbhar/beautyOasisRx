@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Lock, Mail, ArrowRight, ShieldCheck, AlertCircle, Eye, EyeOff, MailCheck } from 'lucide-react';
+import { Lock, Mail, ArrowRight, ShieldCheck, AlertCircle, Eye, EyeOff, MailCheck, RefreshCw } from 'lucide-react';
 import { useAdminAuth } from '../../context/AdminAuthContext';
 import { supabase } from '../../lib/supabaseClient';
+import { purgeNonEssentialStorage, autoPruneStorageIfFull, isStorageQuotaError } from '../../services/storageManager';
 import brandLogo from '../../assets/logo.png';
 import loginIllustration from '../../assets/login_illustration.jpg';
 import '../../styles/admin.css';
@@ -15,6 +16,7 @@ export const AdminLoginPage = () => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [isStorageError, setIsStorageError] = useState(false);
   const [loading, setLoading] = useState(false);
   const [emailNotConfirmed, setEmailNotConfirmed] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
@@ -25,6 +27,13 @@ export const AdminLoginPage = () => {
   const [forgotError, setForgotError] = useState('');
   const [forgotLoading, setForgotLoading] = useState(false);
 
+  // Proactive storage health check on page load to prevent login storage block
+  useEffect(() => {
+    try {
+      autoPruneStorageIfFull();
+    } catch (_) {}
+  }, []);
+
   // Redirect if already authenticated
   useEffect(() => {
     if (!authLoading && isAuthenticated) {
@@ -33,8 +42,9 @@ export const AdminLoginPage = () => {
   }, [isAuthenticated, authLoading, navigate]);
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+    if (e?.preventDefault) e.preventDefault();
     setError('');
+    setIsStorageError(false);
     setEmailNotConfirmed(false);
     setResendSent(false);
     if (!email.trim()) { setError('Please enter your email address.'); return; }
@@ -49,14 +59,42 @@ export const AdminLoginPage = () => {
         setEmailNotConfirmed(true);
         setError('');
       } else {
+        if (res.isStorageIssue || isStorageQuotaError(res.message)) {
+          setIsStorageError(true);
+        }
         setError(res.message || 'Authentication failed. Please verify your credentials.');
       }
-    } catch {
-      setError('An unexpected error occurred. Please try again.');
+    } catch (err) {
+      if (isStorageQuotaError(err)) {
+        setIsStorageError(true);
+        setError('Browser storage is full. Please click below to purge caches and sign in.');
+      } else {
+        setError('An unexpected error occurred. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
   };
+
+  const handlePurgeStorageAndRetry = async () => {
+    setLoading(true);
+    try {
+      purgeNonEssentialStorage({ forceAll: true });
+      setError('');
+      setIsStorageError(false);
+      const res = await login(email, password);
+      if (res.success) {
+        navigate('/dashboard', { replace: true });
+      } else {
+        setError(res.message || 'Authentication failed. Please check your credentials.');
+      }
+    } catch (err) {
+      setError(err?.message || 'Storage clean failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
 
   const handleResendConfirmation = async () => {
     setResendLoading(true);
@@ -154,9 +192,44 @@ export const AdminLoginPage = () => {
           </div>
 
           {error && (
-            <div className="login-error-banner">
-              <AlertCircle size={16} />
-              <span>{error}</span>
+            <div
+              className="login-error-banner"
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                alignItems: 'flex-start',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px', width: '100%' }}>
+                <AlertCircle size={16} style={{ flexShrink: 0, marginTop: '2px' }} />
+                <span style={{ flex: 1, lineHeight: 1.45 }}>{error}</span>
+              </div>
+              {(isStorageError || isStorageQuotaError(error)) && (
+                <button
+                  type="button"
+                  onClick={handlePurgeStorageAndRetry}
+                  disabled={loading}
+                  style={{
+                    background: '#fef2f2',
+                    border: '1px solid #f87171',
+                    color: '#991b1b',
+                    fontSize: '0.78rem',
+                    fontWeight: 600,
+                    padding: '6px 14px',
+                    borderRadius: '6px',
+                    cursor: loading ? 'not-allowed' : 'pointer',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    marginTop: '2px',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  <RefreshCw size={13} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+                  {loading ? 'Cleaning & signing in…' : 'Purge Storage Cache & Sign In'}
+                </button>
+              )}
             </div>
           )}
 

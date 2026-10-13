@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Tag,
   Plus,
@@ -713,6 +714,7 @@ export const CouponsPage = () => {
 
     return (
       <div
+        className="coupon-mobile-card"
         style={{
           background: '#ffffff',
           borderRadius: '12px',
@@ -845,7 +847,7 @@ export const CouponsPage = () => {
           <p>Create and manage discount codes, campaign rules, redemption limits, and promotional validity windows.</p>
         </div>
 
-        <div className="admin-page-actions" style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div className="admin-page-actions">
           <AdminButton
             variant="secondary"
             onClick={handleManualRefresh}
@@ -993,7 +995,7 @@ export const CouponsPage = () => {
         subtitle={editingCoupon ? 'Update coupon rules, validity window, or discount amount.' : duplicateSourceCode ? 'Review and adjust parameters before saving as a new coupon.' : 'Auto-generate or configure a new promotional discount code.'}
         width="560px"
         footer={
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '12px', width: '100%' }}>
+          <div className="admin-drawer-footer-actions">
             <button
               type="button"
               onClick={() => {
@@ -1149,7 +1151,7 @@ export const CouponsPage = () => {
           </div>
 
           {/* Discount Type & Value Row */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+          <div className="coupon-form-grid-2">
             <div>
               <label style={{ display: 'block', fontSize: '0.84rem', fontWeight: 600, color: '#0f2942', marginBottom: '6px' }}>
                 Discount Type <span style={{ color: '#dc2626' }}>*</span>
@@ -1196,7 +1198,7 @@ export const CouponsPage = () => {
           </div>
 
           {/* Minimum Spend & Status Row */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+          <div className="coupon-form-grid-2">
             <div>
               <label style={{ display: 'block', fontSize: '0.84rem', fontWeight: 600, color: '#0f2942', marginBottom: '6px' }}>
                 Minimum Order Spend ($)
@@ -1288,7 +1290,7 @@ export const CouponsPage = () => {
             <label style={{ display: 'block', fontSize: '0.84rem', fontWeight: 600, color: '#0f2942', marginBottom: '8px' }}>
               Validity Period
             </label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px', marginBottom: '8px' }}>
+            <div className="coupon-form-grid-2" style={{ marginBottom: '8px' }}>
               <div>
                 <span style={{ fontSize: '0.74rem', color: '#64748b' }}>Start Date</span>
                 <input
@@ -1471,7 +1473,7 @@ export const CouponsPage = () => {
             )}
 
             {/* Metadata Grid */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', background: '#f8fafc', padding: '14px', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '0.82rem' }}>
+            <div className="coupon-metadata-grid" style={{ background: '#f8fafc', padding: '14px', borderRadius: '10px', border: '1px solid #e2e8f0', fontSize: '0.82rem' }}>
               <div>
                 <span style={{ color: '#94a3b8', display: 'block', fontSize: '0.72rem', textTransform: 'uppercase' }}>Discount Type</span>
                 <strong style={{ color: '#0f2942' }}>
@@ -1527,7 +1529,7 @@ export const CouponsPage = () => {
       {/* ─────────────────────────────────────────────
           GLOBAL THREE-DOT ACTION MENU (PORTAL)
           ───────────────────────────────────────────── */}
-      {actionMenuCouponId && actionMenuPosition && (() => {
+      {actionMenuCouponId && actionMenuPosition && typeof document !== 'undefined' && createPortal((() => {
         const row = coupons.find((c) => c.id === actionMenuCouponId);
         if (!row) return null;
         const isActive = String(row.raw_status || row.status).toLowerCase() === 'active';
@@ -1628,7 +1630,7 @@ export const CouponsPage = () => {
             </button>
           </div>
         );
-      })()}
+      })(), document.body)}
 
       {/* ── Delete Confirmation Dialog ── */}
       {deleteConfirmCoupon && (

@@ -265,28 +265,11 @@ export const WebsiteContentPage = () => {
         </div>
 
         <div className="admin-page-actions">
-
           <a
             href="/home"
             target="_blank"
             rel="noopener noreferrer"
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '7px',
-              padding: '8px 16px',
-              background: 'rgba(212, 175, 114, 0.08)',
-              border: '1px solid rgba(212, 175, 114, 0.35)',
-              borderRadius: '8px',
-              color: '#92742a',
-              textDecoration: 'none',
-              fontSize: '0.83rem',
-              fontWeight: 600,
-              whiteSpace: 'nowrap',
-              transition: 'all 0.2s ease',
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(212,175,114,0.16)'; e.currentTarget.style.color = '#7a6120'; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(212,175,114,0.08)'; e.currentTarget.style.color = '#92742a'; }}
+            className="cms-preview-btn"
             title="Open the public website in a new tab"
           >
             <ExternalLink size={14} />
@@ -313,22 +296,12 @@ export const WebsiteContentPage = () => {
       />
 
       {/* ── Tabs ── */}
-      <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid #e2e8f0', marginBottom: '24px', flexWrap: 'wrap' }}>
+      <div className="cms-tabs-container">
         {tabs.map((tab) => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            style={{
-              padding: '10px 18px',
-              fontSize: '0.88rem',
-              fontWeight: activeTab === tab.id ? 700 : 500,
-              color: activeTab === tab.id ? '#1e5aa8' : '#64748b',
-              background: 'transparent',
-              border: 'none',
-              borderBottom: activeTab === tab.id ? '2px solid #1e5aa8' : '2px solid transparent',
-              cursor: 'pointer',
-              transition: 'all 0.2s ease',
-            }}
+            className={`cms-tab-button ${activeTab === tab.id ? 'active' : ''}`}
           >
             {tab.label}
           </button>
@@ -560,7 +533,7 @@ export const WebsiteContentPage = () => {
               />
             </div>
 
-            <div className="admin-form-group" style={{ gridColumn: 'span 2' }}>
+            <div className="admin-form-group cms-full-width-col" style={{ gridColumn: 'span 2' }}>
               <label className="admin-form-label">Physical Address <span style={{ color: '#ef4444' }}>*</span></label>
               <input
                 type="text"
@@ -570,7 +543,7 @@ export const WebsiteContentPage = () => {
               />
             </div>
 
-            <div className="admin-form-group" style={{ gridColumn: 'span 2' }}>
+            <div className="admin-form-group cms-full-width-col" style={{ gridColumn: 'span 2' }}>
               <label className="admin-form-label">Clinic Hours of Operation</label>
               <input
                 type="text"
@@ -581,7 +554,7 @@ export const WebsiteContentPage = () => {
               />
             </div>
 
-            <div className="admin-form-group" style={{ gridColumn: 'span 2' }}>
+            <div className="admin-form-group cms-full-width-col" style={{ gridColumn: 'span 2' }}>
               <label className="admin-form-label">Contact CTA Button Text</label>
               <input
                 type="text"
@@ -599,7 +572,7 @@ export const WebsiteContentPage = () => {
       ════════════════════════════════════════ */}
       {activeTab === 'testimonials' && (
         <div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '10px' }}>
             <h3 style={{ margin: 0, fontSize: '1.1rem', color: '#0f2942' }}>
               Verified Patient Testimonials
               <span style={{ marginLeft: '8px', fontSize: '0.8rem', color: '#64748b', fontWeight: 400 }}>
@@ -622,7 +595,7 @@ export const WebsiteContentPage = () => {
               <p>No testimonials yet. Add your first one!</p>
             </div>
           ) : (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px' }}>
+            <div className="cms-testimonials-grid">
               {testimonialsList.map((test) => (
                 <div
                   key={test.id}
@@ -763,7 +736,7 @@ export const WebsiteContentPage = () => {
               />
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+            <div className="admin-drawer-footer-actions" style={{ marginTop: '16px' }}>
               <AdminButton variant="secondary" onClick={() => setAddModal(false)}>
                 Cancel
               </AdminButton>
@@ -855,7 +828,7 @@ export const WebsiteContentPage = () => {
               />
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+            <div className="admin-drawer-footer-actions" style={{ marginTop: '16px' }}>
               <AdminButton variant="secondary" onClick={() => setEditModal(null)}>
                 Cancel
               </AdminButton>
@@ -883,7 +856,7 @@ export const WebsiteContentPage = () => {
           <p style={{ color: '#475569', marginBottom: '20px', lineHeight: 1.6 }}>
             Are you sure you want to permanently delete this testimonial? This action cannot be undone.
           </p>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+          <div className="admin-drawer-footer-actions">
             <AdminButton variant="secondary" onClick={() => setDeleteConfirm(null)}>
               Cancel
             </AdminButton>

@@ -191,6 +191,33 @@ export const ProvidersPage = () => {
     };
   }, [actionMenuClinicianId]);
 
+  const selectedActionClinician = useMemo(() => {
+    if (!actionMenuClinicianId) return null;
+    return clinicians.find((c) => c.id === actionMenuClinicianId) || null;
+  }, [actionMenuClinicianId, clinicians]);
+
+  const handleToggleActionMenu = useCallback((e, row) => {
+    e.stopPropagation();
+    if (actionMenuClinicianId === row.id) {
+      setActionMenuClinicianId(null);
+      setActionMenuPosition(null);
+    } else {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const dropdownHeight = 185;
+      const dropdownWidth = 190;
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const openUpward = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
+      const rawRight = window.innerWidth - rect.right;
+      const clampedRight = Math.max(12, Math.min(window.innerWidth - dropdownWidth - 12, rawRight));
+
+      setActionMenuPosition({
+        top: openUpward ? Math.max(10, rect.top - dropdownHeight - 6) : rect.bottom + 6,
+        right: clampedRight
+      });
+      setActionMenuClinicianId(row.id);
+    }
+  }, [actionMenuClinicianId]);
+
   // Form State
   const [formData, setFormData] = useState({ ...DEFAULT_FORM });
   const [formErrors, setFormErrors] = useState({});
@@ -997,23 +1024,7 @@ export const ProvidersPage = () => {
             <button
               type="button"
               className={`clinician-action-trigger-btn ${isOpen ? 'active' : ''}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (actionMenuClinicianId === row.id) {
-                  setActionMenuClinicianId(null);
-                  setActionMenuPosition(null);
-                } else {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const dropdownHeight = 185;
-                  const spaceBelow = window.innerHeight - rect.bottom;
-                  const openUpward = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
-                  setActionMenuPosition({
-                    top: openUpward ? Math.max(10, rect.top - dropdownHeight - 6) : rect.bottom + 6,
-                    right: Math.max(16, window.innerWidth - rect.right)
-                  });
-                  setActionMenuClinicianId(row.id);
-                }
-              }}
+              onClick={(e) => handleToggleActionMenu(e, row)}
               title="Clinician Actions"
               aria-label="Clinician actions"
               aria-haspopup="true"
@@ -1021,94 +1032,342 @@ export const ProvidersPage = () => {
             >
               <MoreVertical size={16} />
             </button>
-
-            {isOpen && actionMenuPosition && typeof document !== 'undefined' && createPortal(
-              <div
-                className="clinician-action-dropdown-menu"
-                style={{
-                  position: 'fixed',
-                  top: `${actionMenuPosition.top}px`,
-                  right: `${actionMenuPosition.right}px`,
-                  width: '190px',
-                  zIndex: 99999
-                }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                {/* 1. View Profile */}
-                <button
-                  type="button"
-                  className="clinician-action-item item-view"
-                  onClick={() => {
-                    setActionMenuClinicianId(null);
-                    setActionMenuPosition(null);
-                    setSelectedClinician(row);
-                  }}
-                >
-                  <Eye size={15} color="#1e5aa8" />
-                  <span>View Profile</span>
-                </button>
-
-                {/* 2. Edit Clinician */}
-                <button
-                  type="button"
-                  className="clinician-action-item"
-                  onClick={() => {
-                    setActionMenuClinicianId(null);
-                    setActionMenuPosition(null);
-                    handleOpenEditDrawer(row);
-                  }}
-                >
-                  <Edit2 size={15} color="#475569" />
-                  <span>Edit Clinician</span>
-                </button>
-
-                {/* 3. Quick Status Toggle */}
-                <button
-                  type="button"
-                  className={`clinician-action-item ${row.practice_status === 'Active' ? 'item-status-active' : 'item-status-inactive'}`}
-                  onClick={() => {
-                    setActionMenuClinicianId(null);
-                    setActionMenuPosition(null);
-                    handleQuickToggleStatus(row);
-                  }}
-                >
-                  {row.practice_status === 'Active' ? (
-                    <>
-                      <XCircle size={15} color="#d97706" />
-                      <span>Mark as Inactive</span>
-                    </>
-                  ) : (
-                    <>
-                      <CheckCircle2 size={15} color="#10b981" />
-                      <span>Mark as Active</span>
-                    </>
-                  )}
-                </button>
-
-                {/* Divider */}
-                <div className="clinician-action-separator" />
-
-                {/* 4. Delete Clinician */}
-                <button
-                  type="button"
-                  className="clinician-action-item item-danger"
-                  onClick={() => {
-                    setActionMenuClinicianId(null);
-                    setActionMenuPosition(null);
-                    setDeleteTarget(row);
-                  }}
-                >
-                  <Trash2 size={15} color="#dc2626" />
-                  <span>Delete Clinician</span>
-                </button>
-              </div>,
-              document.body
-            )}
           </div>
         );
       }
     }
   ];
+
+  // ── RESPONSIVE MOBILE CARD RENDERER ──
+  const renderMobileCard = (row) => {
+    const isMenuOpen = actionMenuClinicianId === row.id;
+    const isActive = row.practice_status === 'Active';
+
+    // Count active working days
+    const activeDaysCount = DAYS_OF_WEEK.reduce((acc, day) => {
+      const dayVal = row.availability_schedule?.[day];
+      const { isOff } = parseDaySchedule(dayVal);
+      return !isOff ? acc + 1 : acc;
+    }, 0);
+
+    return (
+      <div
+        className="clinician-mobile-card"
+        onClick={() => setSelectedClinician(row)}
+        style={{
+          background: '#ffffff',
+          border: '1px solid #e2e8f0',
+          borderRadius: '14px',
+          padding: '16px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+          cursor: 'pointer',
+          position: 'relative'
+        }}
+      >
+        {/* Top Section: Avatar + Name / Title + Status + 3-Dot Menu */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', minWidth: 0, flex: 1 }}>
+            {/* Clinician Avatar */}
+            {row.profile_image_url ? (
+              <img
+                src={row.profile_image_url}
+                alt={row.clinician_name}
+                style={{
+                  width: '46px',
+                  height: '46px',
+                  borderRadius: '50%',
+                  objectFit: 'cover',
+                  border: '1.5px solid #cbd5e1',
+                  boxShadow: '0 2px 6px rgba(0,0,0,0.06)',
+                  flexShrink: 0
+                }}
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                  if (e.currentTarget.nextElementSibling) {
+                    e.currentTarget.nextElementSibling.style.display = 'flex';
+                  }
+                }}
+              />
+            ) : null}
+            <div
+              style={{
+                width: '46px',
+                height: '46px',
+                borderRadius: '50%',
+                background: '#e0f2fe',
+                color: '#0369a1',
+                display: row.profile_image_url ? 'none' : 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: 700,
+                fontSize: '0.92rem',
+                border: '1.5px solid #bae6fd',
+                flexShrink: 0
+              }}
+            >
+              {row.clinician_name.replace('Dr. ', '').substring(0, 2).toUpperCase()}
+            </div>
+
+            {/* Name & Title */}
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontWeight: 700, color: '#0f2942', fontSize: '0.96rem', lineHeight: 1.3 }}>
+                {row.clinician_name}
+              </div>
+              <div
+                style={{
+                  fontSize: '0.76rem',
+                  color: '#64748b',
+                  marginTop: '2px',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                {row.clinical_title}
+              </div>
+            </div>
+          </div>
+
+          {/* Status Badge & 3-Dot Action Button */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleQuickToggleStatus(row);
+              }}
+              title="Click to toggle Active / Inactive"
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 0 }}
+            >
+              <AdminBadge status={row.practice_status || 'Active'} />
+            </button>
+
+            <div className="clinician-action-menu-container">
+              <button
+                type="button"
+                className={`clinician-action-trigger-btn ${isMenuOpen ? 'active' : ''}`}
+                onClick={(e) => handleToggleActionMenu(e, row)}
+                title="Clinician Actions"
+                aria-label="Clinician actions menu"
+              >
+                <MoreVertical size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Specialization Badge & Availability days */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <span
+            style={{
+              fontSize: '0.74rem',
+              fontWeight: 600,
+              background: '#f0fdf4',
+              color: '#166534',
+              border: '1px solid #bbf7d0',
+              padding: '3px 9px',
+              borderRadius: '6px'
+            }}
+          >
+            {row.specialization}
+          </span>
+
+          <span
+            style={{
+              fontSize: '0.72rem',
+              fontWeight: 500,
+              color: '#64748b',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+          >
+            <Calendar size={12} color="#94a3b8" />
+            {activeDaysCount > 0 ? `${activeDaysCount} active days/wk` : 'Schedule off'}
+          </span>
+        </div>
+
+        {/* Contact Info Strip: Email & Phone */}
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px',
+            padding: '10px 12px',
+            background: '#f8fafc',
+            borderRadius: '8px',
+            border: '1px solid #f1f5f9',
+            fontSize: '0.80rem'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '7px', minWidth: 0 }}>
+              <Mail size={13} color="#1e5aa8" style={{ flexShrink: 0 }} />
+              <span
+                style={{
+                  color: '#1e5aa8',
+                  fontWeight: 500,
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                {row.email}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleCopy(row.email, 'email');
+              }}
+              title="Copy email"
+              style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: '2px 4px' }}
+            >
+              {copiedField === 'email' ? <Check size={13} color="#10b981" /> : <Copy size={13} />}
+            </button>
+          </div>
+
+          {row.phone && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: '4px', borderTop: '1px solid #e2e8f0' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '7px', minWidth: 0 }}>
+                <Phone size={13} color="#64748b" style={{ flexShrink: 0 }} />
+                <span style={{ color: '#334155', fontWeight: 500 }}>{row.phone}</span>
+              </div>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleCopy(row.phone, 'phone');
+                }}
+                title="Copy phone"
+                style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: '#94a3b8', padding: '2px 4px' }}
+              >
+                {copiedField === 'phone' ? <Check size={13} color="#10b981" /> : <Copy size={13} />}
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Quick Action Touch Buttons Bar */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: '6px',
+            paddingTop: '8px',
+            borderTop: '1px solid #f1f5f9'
+          }}
+        >
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedClinician(row);
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '4px',
+              padding: '7px 4px',
+              borderRadius: '7px',
+              background: '#eff6ff',
+              border: '1px solid #bfdbfe',
+              color: '#1e5aa8',
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+            title="View profile"
+          >
+            <Eye size={13} />
+            <span>View</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleOpenEditDrawer(row);
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '4px',
+              padding: '7px 4px',
+              borderRadius: '7px',
+              background: '#f8fafc',
+              border: '1px solid #e2e8f0',
+              color: '#334155',
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+            title="Edit clinician"
+          >
+            <Edit2 size={13} />
+            <span>Edit</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              handleQuickToggleStatus(row);
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '4px',
+              padding: '7px 4px',
+              borderRadius: '7px',
+              background: isActive ? '#fffbeb' : '#f0fdf4',
+              border: isActive ? '1px solid #fde68a' : '1px solid #bbf7d0',
+              color: isActive ? '#b45309' : '#15803d',
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+            title={isActive ? 'Mark as Inactive' : 'Mark as Active'}
+          >
+            {isActive ? <XCircle size={13} /> : <CheckCircle2 size={13} />}
+            <span>{isActive ? 'Pause' : 'Activate'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setDeleteTarget(row);
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '4px',
+              padding: '7px 4px',
+              borderRadius: '7px',
+              background: '#fef2f2',
+              border: '1px solid #fecaca',
+              color: '#dc2626',
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+            title="Delete clinician"
+          >
+            <Trash2 size={13} />
+            <span>Delete</span>
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div>
@@ -1174,6 +1433,7 @@ export const ProvidersPage = () => {
         emptyDescription="Adjust your search criteria or register a new clinician."
         emptyActionLabel="Add Clinician"
         onEmptyAction={handleOpenAddDrawer}
+        renderMobileCard={renderMobileCard}
       />
 
       {/* ══════════════════════════════════════════════════════════════ */}
@@ -1191,7 +1451,7 @@ export const ProvidersPage = () => {
         subtitle="Configure clinician credentials, practice availability, and contact details."
         width="660px"
         footer={
-          <div style={{ display: 'flex', justifyContent: editingClinician ? 'space-between' : 'flex-end', alignItems: 'center', gap: '12px', width: '100%' }}>
+          <div className="admin-drawer-footer-actions">
             {editingClinician && (
               <AdminButton
                 type="button"
@@ -1208,43 +1468,41 @@ export const ProvidersPage = () => {
                 View Clinician Profile
               </AdminButton>
             )}
-            <div style={{ display: 'flex', gap: '10px', marginLeft: editingClinician ? 'auto' : '0' }}>
-              <AdminButton
-                variant="secondary"
-                disabled={submitting}
-                onClick={() => {
-                  setIsDrawerOpen(false);
-                  setEditingClinician(null);
-                }}
-              >
-                Cancel
-              </AdminButton>
-              <AdminButton
-                variant="primary"
-                disabled={submitting}
-                onClick={handleSaveClinician}
-              >
-                {submitting ? (
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-                    <span
-                      style={{
-                        width: '14px',
-                        height: '14px',
-                        border: '2px solid #ffffff',
-                        borderRightColor: 'transparent',
-                        borderRadius: '50%',
-                        animation: 'spin 0.7s linear infinite'
-                      }}
-                    />
-                    <span>Saving...</span>
-                  </span>
-                ) : editingClinician ? (
-                  "Save Clinician Record"
-                ) : (
-                  "Register Clinician"
-                )}
-              </AdminButton>
-            </div>
+            <AdminButton
+              variant="secondary"
+              disabled={submitting}
+              onClick={() => {
+                setIsDrawerOpen(false);
+                setEditingClinician(null);
+              }}
+            >
+              Cancel
+            </AdminButton>
+            <AdminButton
+              variant="primary"
+              disabled={submitting}
+              onClick={handleSaveClinician}
+            >
+              {submitting ? (
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                  <span
+                    style={{
+                      width: '14px',
+                      height: '14px',
+                      border: '2px solid #ffffff',
+                      borderRightColor: 'transparent',
+                      borderRadius: '50%',
+                      animation: 'spin 0.7s linear infinite'
+                    }}
+                  />
+                  <span>Saving...</span>
+                </span>
+              ) : editingClinician ? (
+                "Save Clinician Record"
+              ) : (
+                "Register Clinician"
+              )}
+            </AdminButton>
           </div>
         }
       >
@@ -1782,7 +2040,7 @@ export const ProvidersPage = () => {
         subtitle={selectedClinician?.clinical_title}
         width="560px"
         footer={
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', width: '100%' }}>
+          <div className="admin-drawer-footer-actions">
             <AdminButton
               variant="secondary"
               onClick={() => {
@@ -1973,6 +2231,90 @@ export const ProvidersPage = () => {
         confirmText="Delete Clinician"
         confirmVariant="danger"
       />
+
+      {/* ── Root Portal for Clinician Actions Dropdown Menu ── */}
+      {actionMenuClinicianId && actionMenuPosition && selectedActionClinician && typeof document !== 'undefined' && createPortal(
+        <div
+          className="clinician-action-dropdown-menu"
+          style={{
+            position: 'fixed',
+            top: `${actionMenuPosition.top}px`,
+            right: `${actionMenuPosition.right}px`,
+            width: '190px',
+            zIndex: 99999
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* 1. View Profile */}
+          <button
+            type="button"
+            className="clinician-action-item item-view"
+            onClick={() => {
+              setActionMenuClinicianId(null);
+              setActionMenuPosition(null);
+              setSelectedClinician(selectedActionClinician);
+            }}
+          >
+            <Eye size={15} color="#1e5aa8" />
+            <span>View Profile</span>
+          </button>
+
+          {/* 2. Edit Clinician */}
+          <button
+            type="button"
+            className="clinician-action-item"
+            onClick={() => {
+              setActionMenuClinicianId(null);
+              setActionMenuPosition(null);
+              handleOpenEditDrawer(selectedActionClinician);
+            }}
+          >
+            <Edit2 size={15} color="#475569" />
+            <span>Edit Clinician</span>
+          </button>
+
+          {/* 3. Quick Status Toggle */}
+          <button
+            type="button"
+            className={`clinician-action-item ${selectedActionClinician.practice_status === 'Active' ? 'item-status-active' : 'item-status-inactive'}`}
+            onClick={() => {
+              setActionMenuClinicianId(null);
+              setActionMenuPosition(null);
+              handleQuickToggleStatus(selectedActionClinician);
+            }}
+          >
+            {selectedActionClinician.practice_status === 'Active' ? (
+              <>
+                <XCircle size={15} color="#d97706" />
+                <span>Mark as Inactive</span>
+              </>
+            ) : (
+              <>
+                <CheckCircle2 size={15} color="#10b981" />
+                <span>Mark as Active</span>
+              </>
+            )}
+          </button>
+
+          {/* Divider */}
+          <div className="clinician-action-separator" />
+
+          {/* 4. Delete Clinician */}
+          <button
+            type="button"
+            className="clinician-action-item item-danger"
+            onClick={() => {
+              setActionMenuClinicianId(null);
+              setActionMenuPosition(null);
+              setDeleteTarget(selectedActionClinician);
+            }}
+          >
+            <Trash2 size={15} color="#dc2626" />
+            <span>Delete Clinician</span>
+          </button>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };

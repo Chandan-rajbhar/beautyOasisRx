@@ -183,6 +183,24 @@ export const AppointmentTimePage = () => {
     };
   }, [actionMenuId]);
 
+  const handleToggleActionMenu = useCallback((e, row) => {
+    e.stopPropagation();
+    if (actionMenuId === row.id) {
+      setActionMenuId(null);
+      setActionMenuPosition(null);
+    } else {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const dropdownHeight = 160;
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const openUpward = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
+      setActionMenuPosition({
+        top: openUpward ? rect.top - dropdownHeight - 6 : rect.bottom + 6,
+        right: Math.max(16, window.innerWidth - rect.right)
+      });
+      setActionMenuId(row.id);
+    }
+  }, [actionMenuId]);
+
   // ── FETCH (strictly Supabase, no hardcoded fallbacks) ──
   const loadTimes = useCallback(async () => {
     setLoading(true);
@@ -512,94 +530,210 @@ export const AppointmentTimePage = () => {
             <button
               type="button"
               className={`appt-time-action-btn ${isMenuOpen ? 'active' : ''}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (isMenuOpen) {
-                  setActionMenuId(null);
-                  setActionMenuPosition(null);
-                } else {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const dropdownHeight = 150;
-                  const spaceBelow = window.innerHeight - rect.bottom;
-                  const openUpward = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
-                  setActionMenuPosition({
-                    top: openUpward ? rect.top - dropdownHeight - 6 : rect.bottom + 6,
-                    right: Math.max(16, window.innerWidth - rect.right)
-                  });
-                  setActionMenuId(row.id);
-                }
-              }}
+              onClick={(e) => handleToggleActionMenu(e, row)}
               title="Actions"
               aria-label="Actions"
             >
               <MoreVertical size={16} />
             </button>
-
-            {isMenuOpen && actionMenuPosition && createPortal(
-              <div
-                className="appt-time-action-dropdown-menu"
-                style={{
-                  position: 'fixed',
-                  top: `${actionMenuPosition.top}px`,
-                  right: `${actionMenuPosition.right}px`,
-                  zIndex: 99999,
-                  background: '#ffffff',
-                  border: '1px solid #e2e8f0',
-                  borderRadius: '10px',
-                  boxShadow: '0 10px 30px -4px rgba(15,41,66,0.14), 0 4px 6px -2px rgba(15,41,66,0.06)',
-                  padding: '6px',
-                  minWidth: '175px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '2px',
-                  animation: 'apptMenuFade 0.15s cubic-bezier(0.16, 1, 0.3, 1)'
-                }}
-              >
-                {/* Edit */}
-                <button
-                  type="button"
-                  onClick={() => handleOpenEdit(row)}
-                  className="appt-time-menu-item"
-                >
-                  <Edit2 size={14} color="currentColor" />
-                  <span>Edit</span>
-                </button>
-
-                {/* Toggle Status */}
-                <button
-                  type="button"
-                  onClick={() => handleToggleStatus(row)}
-                  className={`appt-time-menu-item ${row.status === 'Active' ? 'item-status-active' : 'item-status-inactive'}`}
-                >
-                  {row.status === 'Active'
-                    ? <XCircle size={14} color="currentColor" />
-                    : <CheckCircle2 size={14} color="currentColor" />}
-                  <span>{row.status === 'Active' ? 'Deactivate' : 'Activate'}</span>
-                </button>
-
-                <div style={{ height: '1px', background: '#f1f5f9', margin: '4px 0' }} />
-
-                {/* Delete */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDeleteTarget(row);
-                    setActionMenuId(null);
-                    setActionMenuPosition(null);
-                  }}
-                  className="appt-time-menu-item item-delete"
-                >
-                  <Trash2 size={14} color="currentColor" />
-                  <span>Delete</span>
-                </button>
-              </div>,
-              document.body
-            )}
           </div>
         );
       }
     }
   ];
+
+  // ── RESPONSIVE MOBILE CARD RENDERER ──
+  const renderMobileCard = (row, rowIndex) => {
+    const isActive = String(row.status || '').toLowerCase() === 'active';
+    const isMenuOpen = actionMenuId === row.id;
+    const itemIndex = (currentPage - 1) * 15 + rowIndex + 1;
+
+    return (
+      <div
+        className="appt-time-mobile-card"
+        style={{
+          background: '#ffffff',
+          border: '1px solid #e2e8f0',
+          borderRadius: '12px',
+          padding: '14px 16px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px'
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+            <span
+              style={{
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                color: '#64748b',
+                background: '#f1f5f9',
+                borderRadius: '6px',
+                padding: '2px 6px',
+                minWidth: '24px',
+                textAlign: 'center'
+              }}
+            >
+              #{itemIndex}
+            </span>
+            <div
+              style={{
+                width: '32px',
+                height: '32px',
+                borderRadius: '8px',
+                backgroundColor: '#eff6ff',
+                color: '#1e5aa8',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                flexShrink: 0,
+                border: '1px solid #dbeafe'
+              }}
+            >
+              <Clock size={16} strokeWidth={2.2} />
+            </div>
+            <span
+              style={{
+                fontWeight: 700,
+                color: '#0f2942',
+                fontSize: '0.98rem',
+                letterSpacing: '-0.01em',
+                fontVariantNumeric: 'tabular-nums'
+              }}
+            >
+              {row.appointment_time}
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+            <span
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                padding: '3px 9px',
+                borderRadius: '9999px',
+                fontSize: '0.72rem',
+                fontWeight: 600,
+                backgroundColor: isActive ? '#ecfdf5' : '#fef2f2',
+                color: isActive ? '#065f46' : '#991b1b',
+                border: `1px solid ${isActive ? '#a7f3d0' : '#fecaca'}`
+              }}
+            >
+              <span
+                style={{
+                  width: '6px',
+                  height: '6px',
+                  borderRadius: '50%',
+                  backgroundColor: isActive ? '#10b981' : '#f43f5e'
+                }}
+              />
+              {row.status || 'Active'}
+            </span>
+
+            <div className="appt-time-action-menu-container">
+              <button
+                type="button"
+                className={`appt-time-action-btn ${isMenuOpen ? 'active' : ''}`}
+                onClick={(e) => handleToggleActionMenu(e, row)}
+                title="Actions"
+                aria-label="Actions"
+              >
+                <MoreVertical size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Action shortcut buttons */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            paddingTop: '10px',
+            borderTop: '1px solid #f1f5f9'
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => handleOpenEdit(row)}
+            style={{
+              flex: 1,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              padding: '7px 12px',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+              background: '#ffffff',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              color: '#334155',
+              cursor: 'pointer'
+            }}
+          >
+            <Edit2 size={13} />
+            <span>Edit</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleToggleStatus(row)}
+            style={{
+              flex: 1,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '6px',
+              padding: '7px 12px',
+              borderRadius: '8px',
+              border: `1px solid ${isActive ? '#fde68a' : '#bbf7d0'}`,
+              background: isActive ? '#fffbeb' : '#f0fdf4',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              color: isActive ? '#92400e' : '#166534',
+              cursor: 'pointer'
+            }}
+          >
+            {isActive ? <XCircle size={13} /> : <CheckCircle2 size={13} />}
+            <span>{isActive ? 'Deactivate' : 'Activate'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setDeleteTarget(row);
+              setActionMenuId(null);
+              setActionMenuPosition(null);
+            }}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '7px 11px',
+              borderRadius: '8px',
+              border: '1px solid #fecaca',
+              background: '#fff1f2',
+              color: '#be123c',
+              cursor: 'pointer'
+            }}
+            title="Delete time slot"
+            aria-label="Delete"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      </div>
+    );
+  };
+
+  // Selected row for root portal action dropdown
+  const selectedActionRow = useMemo(() => {
+    return times.find(t => t.id === actionMenuId) || null;
+  }, [times, actionMenuId]);
 
   // ── STATS ──
   const activeCount = times.filter(t => t.status === 'Active').length;
@@ -625,33 +759,15 @@ export const AppointmentTimePage = () => {
       </div>
 
       {/* Summary Stats */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
-          gap: '14px',
-          marginBottom: '20px'
-        }}
-      >
+      <div className="appointment-times-stats-grid">
         {[
           { label: 'Total Time Slots', value: times.length, color: '#1e5aa8' },
           { label: 'Active Slots', value: activeCount, color: '#15803d' },
           { label: 'Inactive Slots', value: inactiveCount, color: '#64748b' }
         ].map((stat) => (
-          <div
-            key={stat.label}
-            style={{
-              background: '#ffffff',
-              border: '1px solid #e2e8f0',
-              borderRadius: '12px',
-              padding: '16px 20px',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: '4px'
-            }}
-          >
-            <span style={{ fontSize: '1.6rem', fontWeight: 700, color: stat.color }}>{stat.value}</span>
-            <span style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: 500 }}>{stat.label}</span>
+          <div key={stat.label} className="appointment-times-stat-card">
+            <span className="appointment-times-stat-number" style={{ color: stat.color }}>{stat.value}</span>
+            <span className="appointment-times-stat-label">{stat.label}</span>
           </div>
         ))}
       </div>
@@ -729,6 +845,7 @@ export const AppointmentTimePage = () => {
         emptyDescription="Create an appointment time slot to get started."
         emptyActionLabel="Add Time Slot"
         onEmptyAction={handleOpenAdd}
+        renderMobileCard={renderMobileCard}
       />
 
       {/* ── Add / Edit Drawer ── */}
@@ -747,7 +864,7 @@ export const AppointmentTimePage = () => {
         }
         width="460px"
         footer={
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', width: '100%' }}>
+          <div className="admin-drawer-footer-actions">
             <AdminButton
               variant="secondary"
               onClick={() => {
@@ -851,6 +968,68 @@ export const AppointmentTimePage = () => {
         confirmText="Clear All"
         confirmVariant="danger"
       />
+
+      {/* ── Root-level Action Dropdown Menu (Portal) ── */}
+      {actionMenuId && actionMenuPosition && selectedActionRow && createPortal(
+        <div
+          className="appt-time-action-dropdown-menu"
+          style={{
+            position: 'fixed',
+            top: `${actionMenuPosition.top}px`,
+            right: `${actionMenuPosition.right}px`,
+            zIndex: 99999,
+            background: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '10px',
+            boxShadow: '0 10px 30px -4px rgba(15,41,66,0.14), 0 4px 6px -2px rgba(15,41,66,0.06)',
+            padding: '6px',
+            minWidth: '175px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '2px',
+            animation: 'apptMenuFade 0.15s cubic-bezier(0.16, 1, 0.3, 1)'
+          }}
+        >
+          {/* Edit */}
+          <button
+            type="button"
+            onClick={() => handleOpenEdit(selectedActionRow)}
+            className="appt-time-menu-item"
+          >
+            <Edit2 size={14} color="currentColor" />
+            <span>Edit</span>
+          </button>
+
+          {/* Toggle Status */}
+          <button
+            type="button"
+            onClick={() => handleToggleStatus(selectedActionRow)}
+            className={`appt-time-menu-item ${selectedActionRow.status === 'Active' ? 'item-status-active' : 'item-status-inactive'}`}
+          >
+            {selectedActionRow.status === 'Active'
+              ? <XCircle size={14} color="currentColor" />
+              : <CheckCircle2 size={14} color="currentColor" />}
+            <span>{selectedActionRow.status === 'Active' ? 'Deactivate' : 'Activate'}</span>
+          </button>
+
+          <div style={{ height: '1px', background: '#f1f5f9', margin: '4px 0' }} />
+
+          {/* Delete */}
+          <button
+            type="button"
+            onClick={() => {
+              setDeleteTarget(selectedActionRow);
+              setActionMenuId(null);
+              setActionMenuPosition(null);
+            }}
+            className="appt-time-menu-item item-delete"
+          >
+            <Trash2 size={14} color="currentColor" />
+            <span>Delete</span>
+          </button>
+        </div>,
+        document.body
+      )}
     </div>
   );
 };

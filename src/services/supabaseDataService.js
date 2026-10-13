@@ -11,10 +11,20 @@
 
 import { supabase } from '../lib/supabaseClient';
 import { supabaseAdmin } from '../lib/supabaseAdmin';
-import { normalizeNotification, DEFAULT_NOTIFICATIONS, deduplicateNotifications, isStaticNotification } from './notificationService';
+import {
+  notificationService,
+  normalizeNotification,
+  DEFAULT_NOTIFICATIONS,
+  deduplicateNotifications,
+  isStaticNotification
+} from './notificationService';
 import { activityLogService } from './activityLogService';
+
 import { getUpcomingAppointments, isAppointmentUpcoming } from '../utils/appointmentUtils';
 import { normalizeCoupon } from './couponService';
+import { isStorageQuotaError, purgeNonEssentialStorage } from './storageManager';
+
+
 
 // Map collection names to Supabase table names
 const TABLE_MAP = {
@@ -241,15 +251,26 @@ function loadFromStorage(collection) {
   return null;
 }
 
-// Helper: save to localStorage asynchronously
+// Helper: save to localStorage asynchronously with quota protection
 function saveToStorage(collection, data) {
   try {
     // Only persist arrays or serializable objects
     if (data && (Array.isArray(data) || typeof data === 'object')) {
-      localStorage.setItem(`bo_cache_${collection}`, JSON.stringify(sanitizeCacheData(data)));
+      const sanitized = sanitizeCacheData(data);
+      const serialized = JSON.stringify(sanitized);
+      // Skip writing oversized payload (> 1.2MB for a single collection) to localStorage
+      if (serialized.length > 1200000) return;
+      localStorage.setItem(`bo_cache_${collection}`, serialized);
     }
-  } catch (_) { }
+  } catch (err) {
+    if (isStorageQuotaError(err)) {
+      try {
+        purgeNonEssentialStorage();
+      } catch (_) {}
+    }
+  }
 }
+
 
 // Notify subscribers of state changes
 function notifySubscribers(collection, data) {
@@ -1022,33 +1043,40 @@ async function deleteItem(collection, id) {
   if (!table) return false;
 
   let delError = null;
-  try {
-    const res = await supabase.from(table).delete().eq('id', id);
-    if (res.error) {
-      delError = res.error;
-      const adminRes = await supabaseAdmin.from(table).delete().eq('id', id);
-      if (!adminRes.error) {
-        delError = null;
-      }
-    }
-  } catch (err) {
-    delError = err;
+  if (collection === 'notifications') {
+    await notificationService.deleteNotification(id);
+  } else {
     try {
-      const adminRes = await supabaseAdmin.from(table).delete().eq('id', id);
-      if (!adminRes.error) {
-        delError = null;
+      const res = await supabase.from(table).delete().eq('id', id);
+      if (res.error) {
+        delError = res.error;
+        const adminRes = await supabaseAdmin.from(table).delete().eq('id', id);
+        if (!adminRes.error) {
+          delError = null;
+        }
       }
-    } catch (_) { }
-  }
+    } catch (err) {
+      delError = err;
+      try {
+        const adminRes = await supabaseAdmin.from(table).delete().eq('id', id);
+        if (!adminRes.error) {
+          delError = null;
+        }
+      } catch (_) { }
+    }
 
-  if (delError && delError.code !== '22P02') {
-    console.error(`Supabase delete error [${collection}]:`, delError);
-    throw delError;
+    if (delError && delError.code !== '22P02') {
+      console.error(`Supabase delete error [${collection}]:`, delError);
+      throw delError;
+    }
   }
 
   // Update in-memory cache directly
-  const currentList = Array.isArray(cache[collection]) ? cache[collection] : [];
+  const currentList = Array.isArray(cache[collection]) && cache[collection].length > 0
+    ? cache[collection]
+    : (Array.isArray(getCachedData(collection, null)) ? getCachedData(collection, []) : []);
   const updatedList = currentList.filter((item) => String(item.id) !== String(id));
+  cache[collection] = updatedList;
   notifySubscribers(collection, updatedList);
   saveToStorage(collection, updatedList);
 
@@ -1176,8 +1204,10 @@ function enableRealtime(collections = ['appointments', 'clients', 'orders', 'pay
               saveToStorage('notifications', updated);
               notifySubscribers('notifications', updated);
             } else if (payload.eventType === 'DELETE' && payload.old) {
-              const current = Array.isArray(cache.notifications) ? cache.notifications : [];
-              const filtered = current.filter((n) => n.id !== payload.old.id);
+              const current = Array.isArray(cache.notifications) && cache.notifications.length > 0
+                ? cache.notifications
+                : (Array.isArray(getCachedData('notifications', null)) ? getCachedData('notifications', []) : []);
+              const filtered = current.filter((n) => String(n.id) !== String(payload.old.id));
               cache.notifications = filtered;
               saveToStorage('notifications', filtered);
               notifySubscribers('notifications', filtered);

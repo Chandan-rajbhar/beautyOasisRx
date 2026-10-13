@@ -701,6 +701,184 @@ export const InquiriesPage = () => {
     }
   ];
 
+  const renderMobileCard = (row) => {
+    const tid = row.ticket_id || row.ticketId || (row.id ? `INQ-${String(row.id).slice(0, 8).toUpperCase()}` : 'INQ-N/A');
+    const phone = row.contact_number || row.phone;
+
+    return (
+      <div
+        className="inquiry-mobile-card"
+        style={{
+          background: '#ffffff',
+          border: '1px solid #e2e8f0',
+          borderRadius: '12px',
+          padding: '14px 16px',
+          boxShadow: '0 1px 3px rgba(15, 41, 66, 0.04)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '10px',
+          position: 'relative'
+        }}
+      >
+        {/* Header: Ticket ID + Status Badge + Actions Menu */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleOpenDetails(row);
+              }}
+              title={`View Details for Ticket #${tid}`}
+              style={{
+                fontFamily: 'monospace',
+                fontWeight: 700,
+                fontSize: '0.8rem',
+                color: '#1e5aa8',
+                background: '#eff6ff',
+                border: '1px solid #bfdbfe',
+                padding: '3px 8px',
+                borderRadius: '6px',
+                letterSpacing: '0.02em',
+                cursor: 'pointer'
+              }}
+            >
+              #{tid}
+            </button>
+            <AdminBadge status={row.status || 'New'} />
+          </div>
+
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                title="Inquiry Actions"
+                aria-label="Inquiry actions menu"
+                style={{
+                  background: '#f8fafc',
+                  border: '1px solid #cbd5e1',
+                  padding: '5px 7px',
+                  borderRadius: '6px',
+                  cursor: 'pointer',
+                  color: '#334155',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+              >
+                <MoreVertical size={16} />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" width="220px" fixed={true}>
+              <DropdownMenuItem onClick={() => handleOpenDetails(row)}>
+                <Eye size={15} color="#1e5aa8" />
+                <span>View Details</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => { setEditingInquiry(row); setIsAddDrawerOpen(true); }}>
+                <Edit2 size={15} color="#475569" />
+                <span>Edit Inquiry</span>
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setChatInquiry(row)}>
+                <MessageSquare size={15} color="#15803d" />
+                <span>Reply / Chat</span>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <div style={{ padding: '6px 4px 4px', display: 'flex', flexDirection: 'column', gap: '6px' }} onClick={(e) => e.stopPropagation()}>
+                <div style={{ fontSize: '0.66rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.06em', color: '#94a3b8', paddingLeft: '4px', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <RotateCcw size={11} color="#94a3b8" />
+                  <span>Change Status</span>
+                </div>
+                <InquiryStatusActionSelect row={row} onUpdateStatus={handleUpdateStatus} />
+              </div>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="danger" onClick={() => setDeleteConfirmId(row.id)}>
+                <Trash2 size={15} color="#dc2626" />
+                <span>Delete</span>
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        {/* Sender details: Name & Contacts */}
+        <div style={{ borderBottom: '1px solid #f1f5f9', paddingBottom: '8px' }}>
+          <button
+            type="button"
+            onClick={() => handleOpenDetails(row)}
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              fontSize: '0.96rem',
+              fontWeight: 700,
+              color: '#0f2942',
+              cursor: 'pointer',
+              textAlign: 'left',
+              display: 'block'
+            }}
+          >
+            {row.name}
+          </button>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px', marginTop: '4px', fontSize: '0.78rem' }}>
+            {row.email && (
+              <a
+                href={`mailto:${row.email}`}
+                onClick={(e) => e.stopPropagation()}
+                style={{ color: '#1e5aa8', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 500 }}
+              >
+                <Mail size={12} />
+                <span>{row.email}</span>
+              </a>
+            )}
+            {phone && (
+              <a
+                href={`tel:${phone}`}
+                onClick={(e) => e.stopPropagation()}
+                style={{ color: '#475569', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '4px', fontWeight: 500 }}
+              >
+                <Phone size={12} />
+                <span>{phone}</span>
+              </a>
+            )}
+          </div>
+        </div>
+
+        {/* Subject & Message Preview */}
+        <div>
+          <div style={{ fontSize: '0.84rem', fontWeight: 600, color: '#1e293b' }}>
+            {row.subject}
+          </div>
+          {row.message && (
+            <div style={{ fontSize: '0.78rem', color: '#64748b', marginTop: '3px', lineHeight: 1.4, display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+              {row.message}
+            </div>
+          )}
+        </div>
+
+        {/* Quick Actions Footer */}
+        <div style={{ display: 'flex', gap: '8px', paddingTop: '6px', borderTop: '1px solid #f8fafc' }}>
+          <AdminButton
+            variant="secondary"
+            size="sm"
+            style={{ flex: 1, justifyContent: 'center', fontSize: '0.78rem', padding: '6px 10px' }}
+            onClick={() => handleOpenDetails(row)}
+            icon={<Eye size={13} />}
+          >
+            View Details
+          </AdminButton>
+          <AdminButton
+            variant="primary"
+            size="sm"
+            style={{ flex: 1, justifyContent: 'center', fontSize: '0.78rem', padding: '6px 10px' }}
+            onClick={() => setChatInquiry(row)}
+            icon={<MessageSquare size={13} />}
+          >
+            Reply / Chat
+          </AdminButton>
+        </div>
+      </div>
+    );
+  };
+
   return (
     <div>
       {/* Page Header */}
@@ -710,8 +888,7 @@ export const InquiriesPage = () => {
           <p>Review, respond, and manage prospective patient inquiries submitted via the public BeautyOasisRx website.</p>
         </div>
 
-        <div className="admin-page-actions" style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-
+        <div className="admin-page-actions">
           <AdminButton
             variant="primary"
             onClick={() => {
@@ -756,6 +933,7 @@ export const InquiriesPage = () => {
       <AdminTable
         columns={columns}
         data={filteredInquiries}
+        renderMobileCard={renderMobileCard}
         loading={isLoading || (contextLoading && inquiriesList.length === 0)}
         itemsPerPage={20}
         itemLabel="inquiries"

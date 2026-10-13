@@ -341,7 +341,7 @@ export const UpdateOrderStatusModal = ({
         </div>
 
         {/* Footer Actions */}
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '10px' }}>
+        <div className="admin-drawer-footer-actions" style={{ marginTop: '10px' }}>
           <AdminButton variant="secondary" onClick={onClose} disabled={isSaving}>
             Cancel
           </AdminButton>

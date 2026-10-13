@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   DollarSign,
@@ -155,6 +156,34 @@ export const PaymentsPage = () => {
       window.removeEventListener('scroll', handleClose, true);
     };
   }, []);
+
+  // Viewport bounds-checked action menu opener
+  const handleOpenActionMenu = (e, row) => {
+    e.stopPropagation();
+    if (actionMenuPaymentId === row.id) {
+      setActionMenuPaymentId(null);
+      setActionMenuPosition(null);
+      return;
+    }
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const dropdownHeight = 175;
+    const dropdownWidth = 185;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const openUpward = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
+
+    let top = openUpward ? rect.top - dropdownHeight - 6 : rect.bottom + 6;
+    if (top < 10) top = 10;
+
+    let right = window.innerWidth - rect.right;
+    if (right < 12) right = 12;
+    if (right + dropdownWidth > window.innerWidth) {
+      right = Math.max(12, window.innerWidth - dropdownWidth - 12);
+    }
+
+    setActionMenuPosition({ top, right });
+    setActionMenuPaymentId(row.id);
+  };
 
   const handleUpdateStatus = async (status) => {
     if (!editPayment) return;
@@ -404,23 +433,7 @@ export const PaymentsPage = () => {
           <div style={{ display: 'inline-flex', justifyContent: 'flex-end', width: '100%', position: 'relative' }}>
             <button
               type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (actionMenuPaymentId === row.id) {
-                  setActionMenuPaymentId(null);
-                  setActionMenuPosition(null);
-                } else {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const dropdownHeight = 170;
-                  const spaceBelow = window.innerHeight - rect.bottom;
-                  const openUpward = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
-                  setActionMenuPosition({
-                    top: openUpward ? rect.top - dropdownHeight - 6 : rect.bottom + 6,
-                    right: Math.max(16, window.innerWidth - rect.right)
-                  });
-                  setActionMenuPaymentId(row.id);
-                }
-              }}
+              onClick={(e) => handleOpenActionMenu(e, row)}
               title="Payment Actions"
               aria-label="Payment actions menu"
               aria-haspopup="true"
@@ -456,6 +469,7 @@ export const PaymentsPage = () => {
 
     return (
       <div
+        className="payment-mobile-card"
         style={{
           background: '#ffffff',
           border: '1px solid #e2e8f0',
@@ -489,23 +503,7 @@ export const PaymentsPage = () => {
 
           <button
             type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (actionMenuPaymentId === row.id) {
-                setActionMenuPaymentId(null);
-                setActionMenuPosition(null);
-              } else {
-                const rect = e.currentTarget.getBoundingClientRect();
-                const dropdownHeight = 170;
-                const spaceBelow = window.innerHeight - rect.bottom;
-                const openUpward = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
-                setActionMenuPosition({
-                  top: openUpward ? rect.top - dropdownHeight - 6 : rect.bottom + 6,
-                  right: Math.max(12, window.innerWidth - rect.right)
-                });
-                setActionMenuPaymentId(row.id);
-              }
-            }}
+            onClick={(e) => handleOpenActionMenu(e, row)}
             title="Payment Actions"
             aria-label="Payment actions menu"
             style={{
@@ -613,7 +611,7 @@ export const PaymentsPage = () => {
       </div>
 
       {/* Summary Cards */}
-      <div className="admin-stats-grid">
+      <div className="admin-stats-grid payment-stats-grid">
         <AdminCard
           title="Total Collected Revenue"
           value={formatCardAmount(summaryMetrics.totalRevenue)}
@@ -687,7 +685,7 @@ export const PaymentsPage = () => {
       />
 
       {/* Fixed Viewport Dropdown Menu for Actions */}
-      {actionMenuPaymentId && actionMenuPosition && activePayment && (
+      {actionMenuPaymentId && actionMenuPosition && activePayment && typeof document !== 'undefined' && createPortal(
         <div
           className="payment-action-dropdown-menu"
           style={{
@@ -838,7 +836,8 @@ export const PaymentsPage = () => {
             <Trash2 size={15} color="#b91c1c" />
             <span>Delete Payment</span>
           </button>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Edit Status Modal */}
@@ -860,7 +859,7 @@ export const PaymentsPage = () => {
               </select>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+            <div className="admin-drawer-footer-actions">
               <AdminButton variant="secondary" onClick={() => setEditPayment(null)}>
                 Cancel
               </AdminButton>
@@ -885,9 +884,11 @@ export const PaymentsPage = () => {
         title="Transaction Receipt"
         subtitle={`Ref: ${selectedPayment?.transactionId}`}
         footer={
-          <AdminButton variant="primary" onClick={() => setSelectedPayment(null)}>
-            Close
-          </AdminButton>
+          <div className="admin-drawer-footer-actions">
+            <AdminButton variant="primary" onClick={() => setSelectedPayment(null)}>
+              Close
+            </AdminButton>
+          </div>
         }
       >
         {selectedPayment && (
@@ -915,7 +916,7 @@ export const PaymentsPage = () => {
               <h4 style={{ margin: '0 0 10px 0', fontSize: '0.88rem', color: '#0f2942', fontWeight: 700 }}>
                 Transaction Specifications
               </h4>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '0.84rem' }}>
+              <div className="payment-specs-grid" style={{ fontSize: '0.84rem' }}>
                 <div>
                   <span style={{ color: '#64748b', fontSize: '0.74rem', display: 'block' }}>Client</span>
                   {(() => {

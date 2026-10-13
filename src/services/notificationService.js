@@ -852,31 +852,61 @@ export const notificationService = {
    * Delete a notification from Supabase
    */
   async deleteNotification(id) {
-    if (!id) return;
+    if (!id) return false;
+    let delError = null;
     try {
       const { error } = await supabase
         .from('notifications')
         .delete()
         .eq('id', id);
 
-      if (error && supabaseAdmin) {
-        await supabaseAdmin
-          .from('notifications')
-          .delete()
-          .eq('id', id);
+      if (error) {
+        delError = error;
+        if (supabaseAdmin) {
+          const adminRes = await supabaseAdmin
+            .from('notifications')
+            .delete()
+            .eq('id', id);
+          if (!adminRes.error) {
+            delError = null;
+          } else {
+            delError = adminRes.error;
+          }
+        }
       }
     } catch (err) {
-      console.warn('[NotificationService] Delete notification error:', err);
+      delError = err;
+      if (supabaseAdmin) {
+        try {
+          const adminRes = await supabaseAdmin
+            .from('notifications')
+            .delete()
+            .eq('id', id);
+          if (!adminRes.error) {
+            delError = null;
+          }
+        } catch (_) {}
+      }
     }
 
+    if (delError && delError.code !== '22P02') {
+      console.warn('[NotificationService] Delete notification error:', delError);
+      throw delError;
+    }
+
+    // Always update local cache immediately so refresh won't restore it
     try {
       const cached = localStorage.getItem('bo_cache_notifications');
       if (cached) {
         const list = JSON.parse(cached);
-        const updated = list.filter(n => n.id !== id);
-        localStorage.setItem('bo_cache_notifications', JSON.stringify(deduplicateNotifications(updated)));
+        if (Array.isArray(list)) {
+          const updated = list.filter(n => String(n.id) !== String(id));
+          localStorage.setItem('bo_cache_notifications', JSON.stringify(deduplicateNotifications(updated)));
+        }
       }
     } catch (_) {}
+
+    return true;
   },
 
   /**

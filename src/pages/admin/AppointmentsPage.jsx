@@ -158,6 +158,53 @@ export const AppointmentsPage = () => {
   const [actionMenuPosition, setActionMenuPosition] = useState(null);
   const [statusSubmenuId, setStatusSubmenuId] = useState(null);
 
+  // Close action menu on click outside, window scroll or resize
+  useEffect(() => {
+    const handleClose = () => {
+      setActionMenuApptId(null);
+      setActionMenuPosition(null);
+      setStatusSubmenuId(null);
+    };
+    if (actionMenuApptId) {
+      window.addEventListener('click', handleClose);
+      window.addEventListener('scroll', handleClose, true);
+      window.addEventListener('resize', handleClose);
+      return () => {
+        window.removeEventListener('click', handleClose);
+        window.removeEventListener('scroll', handleClose, true);
+        window.removeEventListener('resize', handleClose);
+      };
+    }
+  }, [actionMenuApptId]);
+
+  const handleToggleActionMenu = useCallback((e, row) => {
+    e.stopPropagation();
+    if (actionMenuApptId === row.id) {
+      setActionMenuApptId(null);
+      setActionMenuPosition(null);
+      setStatusSubmenuId(null);
+    } else {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const DROPDOWN_HEIGHT = 280;
+      const DROPDOWN_WIDTH = 190;
+      const spaceBelow = window.innerHeight - rect.bottom - 8;
+      const spaceAbove = rect.top - 8;
+      const openAbove = spaceBelow < DROPDOWN_HEIGHT && spaceAbove >= DROPDOWN_HEIGHT;
+      const topPos = openAbove
+        ? Math.max(8, rect.top - DROPDOWN_HEIGHT)
+        : rect.bottom + 4;
+      const naturalRight = window.innerWidth - rect.right;
+      const clampedRight = Math.max(8, Math.min(naturalRight, window.innerWidth - DROPDOWN_WIDTH - 8));
+      setActionMenuPosition({
+        top: topPos,
+        right: clampedRight,
+        openAbove
+      });
+      setActionMenuApptId(row.id);
+      setStatusSubmenuId(null);
+    }
+  }, [actionMenuApptId]);
+
   // Dynamic Supabase data states
   const [patientsList, setPatientsList] = useState(() => {
     try {
@@ -1357,44 +1404,12 @@ export const AppointmentsPage = () => {
       align: 'right',
       render: (row) => {
         const isMenuOpen = actionMenuApptId === row.id;
-        const isPaid = (row.paymentStatus || row.payment_status) === 'Paid';
-        const isCancelled = row.status === 'Cancelled';
-
         return (
           <div className="appointment-action-menu-container" style={{ display: 'inline-flex', alignItems: 'center' }}>
             <button
               type="button"
               title="Appointment Actions"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (isMenuOpen) {
-                  setActionMenuApptId(null);
-                  setActionMenuPosition(null);
-                  setStatusSubmenuId(null);
-                } else {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  // Responsive positioning: estimate dropdown height (~220px worst-case with status submenu)
-                  const DROPDOWN_HEIGHT = 260;
-                  const DROPDOWN_WIDTH = 180;
-                  const spaceBelow = window.innerHeight - rect.bottom - 8;
-                  const spaceAbove = rect.top - 8;
-                  // Prefer opening below; flip above if insufficient space below
-                  const openAbove = spaceBelow < DROPDOWN_HEIGHT && spaceAbove >= DROPDOWN_HEIGHT;
-                  const topPos = openAbove
-                    ? Math.max(8, rect.top - DROPDOWN_HEIGHT)
-                    : rect.bottom + 4;
-                  // Clamp right so dropdown never overflows the left edge on narrow screens
-                  const naturalRight = window.innerWidth - rect.right;
-                  const clampedRight = Math.max(8, Math.min(naturalRight, window.innerWidth - DROPDOWN_WIDTH - 8));
-                  setActionMenuPosition({
-                    top: topPos,
-                    right: clampedRight,
-                    openAbove
-                  });
-                  setActionMenuApptId(row.id);
-                  setStatusSubmenuId(null);
-                }
-              }}
+              onClick={(e) => handleToggleActionMenu(e, row)}
               style={{
                 background: isMenuOpen ? '#e2e8f0' : '#f8fafc',
                 border: '1px solid #cbd5e1',
@@ -1410,241 +1425,245 @@ export const AppointmentsPage = () => {
             >
               <MoreVertical size={16} />
             </button>
-
-            {/* Fixed Viewport Dropdown Menu */}
-            {isMenuOpen && actionMenuPosition && (
-              <div
-                className="appointment-action-dropdown-menu"
-                style={{
-                  position: 'fixed',
-                  top: `${actionMenuPosition.top}px`,
-                  right: `${actionMenuPosition.right}px`,
-                  width: '180px',
-                  maxWidth: 'calc(100vw - 16px)',
-                  maxHeight: 'calc(100vh - 24px)',
-                  overflowY: 'auto',
-                  background: '#ffffff',
-                  border: '1px solid #e2e8f0',
-                  borderRadius: '10px',
-                  boxShadow: '0 10px 25px -5px rgba(15, 41, 66, 0.14), 0 8px 10px -6px rgba(15, 41, 66, 0.08)',
-                  zIndex: 99999,
-                  padding: '6px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '2px',
-                  textAlign: 'left'
-                }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                {/* 1. View Appointment */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActionMenuApptId(null);
-                    setActionMenuPosition(null);
-                    setSelectedAppointment(row);
-                  }}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    width: '100%',
-                    padding: '8px 10px',
-                    border: 'none',
-                    background: 'transparent',
-                    borderRadius: '6px',
-                    fontSize: '0.82rem',
-                    fontWeight: 500,
-                    color: '#0f2942',
-                    cursor: 'pointer',
-                    transition: 'background 0.15s ease',
-                    textAlign: 'left'
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = '#f0f7ff'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                >
-                  <Eye size={15} color="#1e5aa8" />
-                  <span>View Details</span>
-                </button>
-
-                {/* 2. Edit Appointment */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActionMenuApptId(null);
-                    setActionMenuPosition(null);
-                    handleEditClick(row);
-                  }}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    width: '100%',
-                    padding: '8px 10px',
-                    border: 'none',
-                    background: 'transparent',
-                    borderRadius: '6px',
-                    fontSize: '0.82rem',
-                    fontWeight: 500,
-                    color: '#0f2942',
-                    cursor: 'pointer',
-                    transition: 'background 0.15s ease',
-                    textAlign: 'left'
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = '#f0f7ff'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                >
-                  <Edit2 size={15} color="#475569" />
-                  <span>Edit</span>
-                </button>
-
-                {/* 3. Stripe Pay Now (only if not paid & not cancelled) */}
-                {!isPaid && !isCancelled && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActionMenuApptId(null);
-                      setActionMenuPosition(null);
-                      setPayNowAppointment(row);
-                    }}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '10px',
-                      width: '100%',
-                      padding: '8px 10px',
-                      border: 'none',
-                      background: 'transparent',
-                      borderRadius: '6px',
-                      fontSize: '0.82rem',
-                      fontWeight: 600,
-                      color: '#15803d',
-                      cursor: 'pointer',
-                      transition: 'background 0.15s ease',
-                      textAlign: 'left'
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = '#f0fdf4'; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                  >
-                    <CreditCard size={15} color="#16a34a" />
-                    <span>Pay Now</span>
-                  </button>
-                )}
-
-                {/* 4. Change Status Submenu Toggle */}
-                <div style={{ position: 'relative' }}>
-                  <button
-                    type="button"
-                    onClick={() => setStatusSubmenuId(statusSubmenuId === row.id ? null : row.id)}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      width: '100%',
-                      padding: '8px 10px',
-                      border: 'none',
-                      background: statusSubmenuId === row.id ? '#f1f5f9' : 'transparent',
-                      borderRadius: '6px',
-                      fontSize: '0.82rem',
-                      fontWeight: 500,
-                      color: '#0f2942',
-                      cursor: 'pointer',
-                      transition: 'background 0.15s ease',
-                      textAlign: 'left'
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.background = '#f1f5f9'; }}
-                    onMouseLeave={(e) => { if (statusSubmenuId !== row.id) e.currentTarget.style.background = 'transparent'; }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <RotateCcw size={15} color="#64748b" />
-                      <span>Change Status</span>
-                    </div>
-                    <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>›</span>
-                  </button>
-
-                  {/* Status Options */}
-                  {statusSubmenuId === row.id && (
-                    <div
-                      style={{
-                        padding: '4px',
-                        background: '#f8fafc',
-                        borderRadius: '6px',
-                        marginTop: '2px',
-                        border: '1px solid #e2e8f0',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '2px'
-                      }}
-                    >
-                      {['Confirmed', 'Completed', 'Scheduled', 'Cancelled', 'Rescheduled'].map((st) => (
-                        <button
-                          key={st}
-                          type="button"
-                          onClick={() => handleUpdateStatus(row.id, st)}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'space-between',
-                            padding: '6px 8px',
-                            border: 'none',
-                            background: row.status === st ? '#e0f2fe' : 'transparent',
-                            color: row.status === st ? '#0369a1' : '#334155',
-                            borderRadius: '4px',
-                            fontSize: '0.78rem',
-                            fontWeight: row.status === st ? 600 : 400,
-                            cursor: 'pointer',
-                            textAlign: 'left'
-                          }}
-                          onMouseEnter={(e) => { if (row.status !== st) e.currentTarget.style.background = '#e2e8f0'; }}
-                          onMouseLeave={(e) => { if (row.status !== st) e.currentTarget.style.background = 'transparent'; }}
-                        >
-                          <span>{st}</span>
-                          {row.status === st && <Check size={12} color="#0369a1" />}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <div style={{ height: '1px', background: '#f1f5f9', margin: '4px 0' }} />
-
-                {/* 5. Delete Appointment */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActionMenuApptId(null);
-                    setActionMenuPosition(null);
-                    setDeleteConfirmId(row.id);
-                  }}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    width: '100%',
-                    padding: '8px 10px',
-                    border: 'none',
-                    background: 'transparent',
-                    borderRadius: '6px',
-                    fontSize: '0.82rem',
-                    fontWeight: 500,
-                    color: '#b91c1c',
-                    cursor: 'pointer',
-                    transition: 'background 0.15s ease',
-                    textAlign: 'left'
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = '#fef2f2'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                >
-                  <Trash2 size={15} color="#b91c1c" />
-                  <span>Delete</span>
-                </button>
-              </div>
-            )}
           </div>
         );
       }
     }
   ];
+
+  // ─────────────────────────────────────────────────────────────
+  // RESPONSIVE MOBILE & TABLET CARD RENDERER
+  // ─────────────────────────────────────────────────────────────
+  const renderMobileCard = (row) => {
+    const isMenuOpen = actionMenuApptId === row.id;
+    const isPaid = (row.paymentStatus || row.payment_status) === 'Paid';
+    const isCancelled = row.status === 'Cancelled';
+    const patientUUID = getPatientUUID(row);
+    const patientName = row.clientName || row.patient_name || row.client_name || 'Patient';
+    const contactInfo = row.clientPhone || row.patient_phone || row.clientEmail || row.patient_email || '';
+    const serviceName = row.serviceName || row.protocol_title || 'Clinical Treatment';
+    const providerName = row.providerName || row.clinician_name || 'Clinical Specialist';
+    const apptDate = row.date || row.appointment_date || '—';
+    const apptTime = row.time || row.appointment_time || '—';
+    const price = row.price ?? row.amount ?? 0;
+    const duration = row.duration || '60 Mins';
+
+    return (
+      <div
+        className="appointment-mobile-card"
+        style={{
+          background: '#ffffff',
+          border: '1px solid #e2e8f0',
+          borderRadius: '14px',
+          padding: '16px',
+          boxShadow: '0 2px 6px rgba(15, 41, 66, 0.04)',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+          position: 'relative'
+        }}
+      >
+        {/* Top: Patient info & Badges/Menu */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+              {patientUUID ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate(`/patients/${patientUUID}`);
+                  }}
+                  title={`View Patient Profile: ${patientName}`}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    padding: 0,
+                    margin: 0,
+                    cursor: 'pointer',
+                    fontWeight: 700,
+                    color: '#0f2942',
+                    fontSize: '0.96rem',
+                    textAlign: 'left',
+                    fontFamily: 'inherit',
+                    lineHeight: 1.2
+                  }}
+                >
+                  {patientName}
+                </button>
+              ) : (
+                <span style={{ fontWeight: 700, color: '#0f2942', fontSize: '0.96rem' }}>
+                  {patientName}
+                </span>
+              )}
+            </div>
+            {contactInfo && (
+              <div style={{ fontSize: '0.76rem', color: '#64748b', marginTop: '2px', wordBreak: 'break-word' }}>
+                {contactInfo}
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+            <AdminBadge status={row.status || 'Confirmed'} />
+            <button
+              type="button"
+              title="Appointment Actions"
+              onClick={(e) => handleToggleActionMenu(e, row)}
+              style={{
+                background: isMenuOpen ? '#e2e8f0' : '#f8fafc',
+                border: '1px solid #cbd5e1',
+                padding: '6px',
+                borderRadius: '7px',
+                cursor: 'pointer',
+                color: '#334155',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <MoreVertical size={16} />
+            </button>
+          </div>
+        </div>
+
+        {/* Service Protocol & Clinician Card */}
+        <div
+          style={{
+            background: '#f8fafc',
+            borderRadius: '10px',
+            padding: '10px 12px',
+            border: '1px solid #edf2f7',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+            <span style={{ fontWeight: 600, color: '#0f2942', fontSize: '0.88rem' }}>
+              {serviceName}
+            </span>
+            <span style={{ fontWeight: 700, color: '#15803d', fontSize: '0.92rem' }}>
+              ${price}
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', fontSize: '0.78rem', color: '#64748b' }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <User size={13} color="#94a3b8" />
+              <span>{providerName}</span>
+            </span>
+            <span style={{ background: '#e2e8f0', color: '#334155', padding: '2px 7px', borderRadius: '4px', fontWeight: 500, fontSize: '0.72rem' }}>
+              {duration}
+            </span>
+          </div>
+        </div>
+
+        {/* Date & Time + Payment Status */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', fontSize: '0.82rem', color: '#334155', fontWeight: 500 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <Calendar size={14} color="#1e5aa8" />
+              <span>{apptDate}</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+              <Clock size={14} color="#64748b" />
+              <span>{apptTime}</span>
+            </div>
+          </div>
+
+          <AdminBadge status={row.paymentStatus || row.payment_status || 'Pending'} />
+        </div>
+
+        {/* Card Action Buttons */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            paddingTop: '8px',
+            borderTop: '1px solid #f1f5f9',
+            marginTop: '2px'
+          }}
+        >
+          <button
+            type="button"
+            onClick={() => setSelectedAppointment(row)}
+            style={{
+              flex: 1,
+              padding: '7px 10px',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+              background: '#ffffff',
+              color: '#0f2942',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '5px',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            <Eye size={14} color="#1e5aa8" />
+            <span>Details</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleEditClick(row)}
+            style={{
+              flex: 1,
+              padding: '7px 10px',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+              background: '#ffffff',
+              color: '#0f2942',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '5px',
+              transition: 'all 0.15s ease'
+            }}
+          >
+            <Edit2 size={14} color="#64748b" />
+            <span>Edit</span>
+          </button>
+
+          {!isPaid && !isCancelled && (
+            <button
+              type="button"
+              onClick={() => setPayNowAppointment(row)}
+              style={{
+                flex: 1.2,
+                padding: '7px 10px',
+                borderRadius: '8px',
+                border: '1px solid #86efac',
+                background: '#f0fdf4',
+                color: '#15803d',
+                fontSize: '0.8rem',
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '5px',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <CreditCard size={14} color="#16a34a" />
+              <span>Pay Now</span>
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div>
@@ -1669,17 +1688,21 @@ export const AppointmentsPage = () => {
 
       {/* Quick View Tab Pills (Upcoming / Recent / All) */}
       <div
+        className="appointments-tabs-container"
         style={{
           display: 'flex',
           gap: '8px',
           marginBottom: '16px',
           borderBottom: '1px solid #e2e8f0',
-          paddingBottom: '12px'
+          paddingBottom: '12px',
+          overflowX: 'auto',
+          WebkitOverflowScrolling: 'touch'
         }}
       >
         <button
           type="button"
           onClick={() => { setViewTab('ALL'); setDateFilter('ALL'); }}
+          className="appointments-tab-pill"
           style={{
             padding: '7px 16px',
             borderRadius: '8px',
@@ -1688,6 +1711,8 @@ export const AppointmentsPage = () => {
             fontWeight: 600,
             cursor: 'pointer',
             transition: 'all 0.15s ease',
+            whiteSpace: 'nowrap',
+            flexShrink: 0,
             background: viewTab === 'ALL' ? '#0f2942' : '#f1f5f9',
             color: viewTab === 'ALL' ? '#ffffff' : '#64748b'
           }}
@@ -1698,6 +1723,7 @@ export const AppointmentsPage = () => {
         <button
           type="button"
           onClick={() => { setViewTab('UPCOMING'); setDateFilter('ALL'); }}
+          className="appointments-tab-pill"
           style={{
             padding: '7px 16px',
             borderRadius: '8px',
@@ -1709,6 +1735,8 @@ export const AppointmentsPage = () => {
             display: 'flex',
             alignItems: 'center',
             gap: '6px',
+            whiteSpace: 'nowrap',
+            flexShrink: 0,
             background: viewTab === 'UPCOMING' ? '#1e5aa8' : '#f1f5f9',
             color: viewTab === 'UPCOMING' ? '#ffffff' : '#64748b'
           }}
@@ -1720,6 +1748,7 @@ export const AppointmentsPage = () => {
         <button
           type="button"
           onClick={() => { setViewTab('RECENT'); setDateFilter('ALL'); }}
+          className="appointments-tab-pill"
           style={{
             padding: '7px 16px',
             borderRadius: '8px',
@@ -1731,6 +1760,8 @@ export const AppointmentsPage = () => {
             display: 'flex',
             alignItems: 'center',
             gap: '6px',
+            whiteSpace: 'nowrap',
+            flexShrink: 0,
             background: viewTab === 'RECENT' ? '#15803d' : '#f1f5f9',
             color: viewTab === 'RECENT' ? '#ffffff' : '#64748b'
           }}
@@ -1814,6 +1845,7 @@ export const AppointmentsPage = () => {
         emptyDescription="Try adjusting your search criteria, dates, or booking a new clinical appointment."
         emptyActionLabel="Schedule Appointment"
         onEmptyAction={handleOpenAddDrawer}
+        renderMobileCard={renderMobileCard}
       />
 
       {/* ── 1. Right-Side Drawer for New & Edit Appointment ── */}
@@ -1832,7 +1864,7 @@ export const AppointmentsPage = () => {
         }
         width="560px"
         footer={
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', width: '100%' }}>
+          <div className="admin-drawer-footer-actions">
             <AdminButton
               variant="secondary"
               onClick={() => {
@@ -1921,7 +1953,7 @@ export const AppointmentsPage = () => {
             </div>
 
             {/* 4 & 5. Date & Time Selection (Grid 2) */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px' }}>
+            <div className="appointment-form-grid-2">
               <div className="admin-form-group">
                 <label className="admin-form-label">
                   Appointment Date <span style={{ color: '#dc2626' }}>*</span>
@@ -1972,7 +2004,7 @@ export const AppointmentsPage = () => {
         subtitle={`Reference #${selectedAppointment?.id}`}
         width="560px"
         footer={
-          <div style={{ display: 'flex', gap: '10px', width: '100%', justifyContent: 'flex-end' }}>
+          <div className="admin-drawer-footer-actions">
             {selectedAppointment &&
               (selectedAppointment.paymentStatus || selectedAppointment.payment_status) !== 'Paid' &&
               selectedAppointment.status !== 'Cancelled' && (
@@ -2041,7 +2073,7 @@ export const AppointmentsPage = () => {
               <h4 style={{ margin: '0 0 10px 0', fontSize: '0.88rem', color: '#0f2942', fontWeight: 700 }}>
                 Patient Details
               </h4>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '0.84rem' }}>
+              <div className="appointment-details-grid-2">
                 <div>
                   <span style={{ color: '#64748b', display: 'block', fontSize: '0.74rem' }}>Name</span>
                   {(() => {
@@ -2100,7 +2132,7 @@ export const AppointmentsPage = () => {
               <h4 style={{ margin: '0 0 10px 0', fontSize: '0.88rem', color: '#0f2942', fontWeight: 700 }}>
                 Protocol Details
               </h4>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '0.84rem' }}>
+              <div className="appointment-details-grid-2">
                 <div>
                   <span style={{ color: '#64748b', display: 'block', fontSize: '0.74rem' }}>Service</span>
                   <span style={{ fontWeight: 600, color: '#1e5aa8' }}>
@@ -2185,6 +2217,243 @@ export const AppointmentsPage = () => {
         title="Delete Appointment"
         message="Are you sure you want to delete this appointment?"
       />
+
+      {/* ── 5. Action Dropdown Menu (Fixed Viewport Portal) ── */}
+      {actionMenuApptId && actionMenuPosition && (() => {
+        const row = appointments.find(a => a.id === actionMenuApptId);
+        if (!row) return null;
+        const isPaid = (row.paymentStatus || row.payment_status) === 'Paid';
+        const isCancelled = row.status === 'Cancelled';
+
+        return (
+          <div
+            className="appointment-action-dropdown-menu"
+            style={{
+              position: 'fixed',
+              top: `${actionMenuPosition.top}px`,
+              right: `${actionMenuPosition.right}px`,
+              width: '185px',
+              maxWidth: 'calc(100vw - 16px)',
+              maxHeight: 'calc(100vh - 24px)',
+              overflowY: 'auto',
+              background: '#ffffff',
+              border: '1px solid #e2e8f0',
+              borderRadius: '10px',
+              boxShadow: '0 10px 25px -5px rgba(15, 41, 66, 0.14), 0 8px 10px -6px rgba(15, 41, 66, 0.08)',
+              zIndex: 99999,
+              padding: '6px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '2px',
+              textAlign: 'left'
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* 1. View Appointment */}
+            <button
+              type="button"
+              onClick={() => {
+                setActionMenuApptId(null);
+                setActionMenuPosition(null);
+                setSelectedAppointment(row);
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                width: '100%',
+                padding: '8px 10px',
+                border: 'none',
+                background: 'transparent',
+                borderRadius: '6px',
+                fontSize: '0.82rem',
+                fontWeight: 500,
+                color: '#0f2942',
+                cursor: 'pointer',
+                transition: 'background 0.15s ease',
+                textAlign: 'left'
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = '#f0f7ff'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+            >
+              <Eye size={15} color="#1e5aa8" />
+              <span>View Details</span>
+            </button>
+
+            {/* 2. Edit Appointment */}
+            <button
+              type="button"
+              onClick={() => {
+                setActionMenuApptId(null);
+                setActionMenuPosition(null);
+                handleEditClick(row);
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                width: '100%',
+                padding: '8px 10px',
+                border: 'none',
+                background: 'transparent',
+                borderRadius: '6px',
+                fontSize: '0.82rem',
+                fontWeight: 500,
+                color: '#0f2942',
+                cursor: 'pointer',
+                transition: 'background 0.15s ease',
+                textAlign: 'left'
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = '#f0f7ff'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+            >
+              <Edit2 size={15} color="#475569" />
+              <span>Edit</span>
+            </button>
+
+            {/* 3. Stripe Pay Now (only if not paid & not cancelled) */}
+            {!isPaid && !isCancelled && (
+              <button
+                type="button"
+                onClick={() => {
+                  setActionMenuApptId(null);
+                  setActionMenuPosition(null);
+                  setPayNowAppointment(row);
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  width: '100%',
+                  padding: '8px 10px',
+                  border: 'none',
+                  background: 'transparent',
+                  borderRadius: '6px',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  color: '#15803d',
+                  cursor: 'pointer',
+                  transition: 'background 0.15s ease',
+                  textAlign: 'left'
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = '#f0fdf4'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+              >
+                <CreditCard size={15} color="#16a34a" />
+                <span>Pay Now</span>
+              </button>
+            )}
+
+            {/* 4. Change Status Submenu Toggle */}
+            <div style={{ position: 'relative' }}>
+              <button
+                type="button"
+                onClick={() => setStatusSubmenuId(statusSubmenuId === row.id ? null : row.id)}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  width: '100%',
+                  padding: '8px 10px',
+                  border: 'none',
+                  background: statusSubmenuId === row.id ? '#f1f5f9' : 'transparent',
+                  borderRadius: '6px',
+                  fontSize: '0.82rem',
+                  fontWeight: 500,
+                  color: '#0f2942',
+                  cursor: 'pointer',
+                  transition: 'background 0.15s ease',
+                  textAlign: 'left'
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = '#f1f5f9'; }}
+                onMouseLeave={(e) => { if (statusSubmenuId !== row.id) e.currentTarget.style.background = 'transparent'; }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <RotateCcw size={15} color="#64748b" />
+                  <span>Change Status</span>
+                </div>
+                <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>›</span>
+              </button>
+
+              {/* Status Options */}
+              {statusSubmenuId === row.id && (
+                <div
+                  style={{
+                    padding: '4px',
+                    background: '#f8fafc',
+                    borderRadius: '6px',
+                    marginTop: '2px',
+                    border: '1px solid #e2e8f0',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '2px'
+                  }}
+                >
+                  {['Confirmed', 'Completed', 'Scheduled', 'Cancelled', 'Rescheduled'].map((st) => (
+                    <button
+                      key={st}
+                      type="button"
+                      onClick={() => handleUpdateStatus(row.id, st)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        padding: '6px 8px',
+                        border: 'none',
+                        background: row.status === st ? '#e0f2fe' : 'transparent',
+                        color: row.status === st ? '#0369a1' : '#334155',
+                        borderRadius: '4px',
+                        fontSize: '0.78rem',
+                        fontWeight: row.status === st ? 600 : 400,
+                        cursor: 'pointer',
+                        textAlign: 'left'
+                      }}
+                      onMouseEnter={(e) => { if (row.status !== st) e.currentTarget.style.background = '#e2e8f0'; }}
+                      onMouseLeave={(e) => { if (row.status !== st) e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      <span>{st}</span>
+                      {row.status === st && <Check size={12} color="#0369a1" />}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div style={{ height: '1px', background: '#f1f5f9', margin: '4px 0' }} />
+
+            {/* 5. Delete Appointment */}
+            <button
+              type="button"
+              onClick={() => {
+                setActionMenuApptId(null);
+                setActionMenuPosition(null);
+                setDeleteConfirmId(row.id);
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                width: '100%',
+                padding: '8px 10px',
+                border: 'none',
+                background: 'transparent',
+                borderRadius: '6px',
+                fontSize: '0.82rem',
+                fontWeight: 500,
+                color: '#b91c1c',
+                cursor: 'pointer',
+                transition: 'background 0.15s ease',
+                textAlign: 'left'
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = '#fef2f2'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+            >
+              <Trash2 size={15} color="#b91c1c" />
+              <span>Delete</span>
+            </button>
+          </div>
+        );
+      })()}
     </div>
   );
 };

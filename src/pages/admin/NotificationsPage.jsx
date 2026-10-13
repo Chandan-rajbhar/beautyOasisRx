@@ -47,9 +47,10 @@ export const NotificationsPage = () => {
   const navigate = useNavigate();
   const [filterType, setFilterType] = useState('ALL');
   const [isSendModalOpen, setIsSendModalOpen] = useState(false);
+  const [deletingId, setDeletingId] = useState(null);
   const [localNotifications, setLocalNotifications] = useState(() => {
     let list = [];
-    if (Array.isArray(notifications)) list = notifications;
+    if (Array.isArray(notifications) && notifications.length > 0) list = notifications;
     else {
       try {
         const cached = localStorage.getItem('bo_cache_notifications');
@@ -64,7 +65,7 @@ export const NotificationsPage = () => {
 
   // Keep local list in sync with context
   useEffect(() => {
-    if (Array.isArray(notifications)) {
+    if (Array.isArray(notifications) && notifications.length > 0) {
       setLocalNotifications(deduplicateNotifications(notifications.filter(n => !isStaticNotification(n))));
     }
   }, [notifications]);
@@ -97,15 +98,21 @@ export const NotificationsPage = () => {
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'notifications' },
-        async () => {
+        async (payload) => {
+          // If DELETE event, immediately remove only that specific notification from local state
+          if (payload.eventType === 'DELETE' && payload.old?.id) {
+            setLocalNotifications((prev) => prev.filter((n) => String(n.id) !== String(payload.old.id)));
+            return;
+          }
+
           try {
             const fresh = await supabaseDataService.fetchAll('notifications', { forceFresh: true });
-            if (Array.isArray(fresh)) {
+            if (Array.isArray(fresh) && fresh.length > 0) {
               setLocalNotifications(deduplicateNotifications(fresh));
             }
           } catch (_) {
             const fallback = await notificationService.fetchNotifications();
-            if (Array.isArray(fallback)) {
+            if (Array.isArray(fallback) && fallback.length > 0) {
               setLocalNotifications(deduplicateNotifications(fallback));
             }
           }
@@ -192,11 +199,31 @@ export const NotificationsPage = () => {
   // Handle Dismiss / Delete Notification
   const handleDeleteNotification = async (notifId, e) => {
     e.stopPropagation();
-    setLocalNotifications((prev) => prev.filter((n) => n.id !== notifId));
+    if (!notifId || deletingId === notifId) return;
+
+    // Snapshot previous notifications state for rollback in case of error
+    const previousNotifications = localNotifications;
+
+    // Optimistically remove only the target notification from local UI state
+    setLocalNotifications((prev) => prev.filter((n) => String(n.id) !== String(notifId)));
+    setDeletingId(notifId);
+
     try {
-      await deleteItem('notifications', notifId);
-    } catch (_) {
-      await notificationService.deleteNotification(notifId);
+      // 1. Delete permanently from Supabase & synchronize AdminDataContext and cache
+      if (deleteItem) {
+        await deleteItem('notifications', notifId);
+      } else {
+        await notificationService.deleteNotification(notifId);
+      }
+
+      toast.success('Notification removed.');
+    } catch (err) {
+      console.error('[NotificationsPage] Delete notification error:', err);
+      // Rollback UI state so the notification remains visible on failure
+      setLocalNotifications(previousNotifications);
+      toast.error('Failed to delete notification. Please try again.');
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -228,7 +255,7 @@ export const NotificationsPage = () => {
           <p>Real-time push delivery audit log for appointments, registrations, orders, and FCM broadcasts.</p>
         </div>
 
-        <div className="admin-page-actions" style={{ display: 'flex', gap: '10px' }}>
+        <div className="admin-page-actions">
           <AdminButton
             variant="secondary"
             onClick={handleMarkAllAsRead}
@@ -248,7 +275,7 @@ export const NotificationsPage = () => {
       </div>
 
       {/* Filter Tabs */}
-      <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid #e2e8f0', marginBottom: '20px', flexWrap: 'wrap' }}>
+      <div className="notifications-tabs-container">
         {[
           { id: 'ALL', label: `All Updates (${localNotifications.length})` },
           { id: 'UNREAD', label: `Unread (${unreadCount})` },
@@ -261,16 +288,7 @@ export const NotificationsPage = () => {
           <button
             key={tab.id}
             onClick={() => setFilterType(tab.id)}
-            style={{
-              padding: '9px 16px',
-              fontSize: '0.84rem',
-              fontWeight: filterType === tab.id ? 700 : 500,
-              color: filterType === tab.id ? '#1e5aa8' : '#64748b',
-              background: 'transparent',
-              border: 'none',
-              borderBottom: filterType === tab.id ? '2px solid #1e5aa8' : '2px solid transparent',
-              cursor: 'pointer'
-            }}
+            className={`notifications-tab-button ${filterType === tab.id ? 'active' : ''}`}
           >
             {tab.label}
           </button>
@@ -289,6 +307,7 @@ export const NotificationsPage = () => {
               <div
                 key={notif.id}
                 onClick={() => handleNotificationClick(notif)}
+                className="notification-list-card"
                 style={{
                   background: isRead ? '#ffffff' : '#f0fdf4',
                   border: isRead ? '1px solid #e2e8f0' : '1px solid #86efac',
@@ -302,7 +321,7 @@ export const NotificationsPage = () => {
                   cursor: 'pointer'
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px', flex: 1, minWidth: 0 }}>
                   <div
                     style={{
                       width: '40px',
@@ -319,7 +338,7 @@ export const NotificationsPage = () => {
                     {getTypeIcon(notif.type || notif.category)}
                   </div>
 
-                  <div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px', flexWrap: 'wrap' }}>
                       <span style={{ fontWeight: 700, color: '#0f2942', fontSize: '0.9rem' }}>
                         {notif.title}
@@ -390,7 +409,7 @@ export const NotificationsPage = () => {
                   </div>
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '14px', flexShrink: 0 }}>
+                <div className="notification-card-actions" style={{ display: 'flex', alignItems: 'center', gap: '14px', flexShrink: 0 }}>
                   <span style={{ fontSize: '0.78rem', color: '#94a3b8' }}>
                     {timeText}
                   </span>
@@ -420,12 +439,13 @@ export const NotificationsPage = () => {
 
                   <button
                     onClick={(e) => handleDeleteNotification(notif.id, e)}
+                    disabled={deletingId === notif.id}
                     title="Dismiss notification"
                     style={{
                       background: 'transparent',
                       border: 'none',
-                      color: '#94a3b8',
-                      cursor: 'pointer',
+                      color: deletingId === notif.id ? '#cbd5e1' : '#94a3b8',
+                      cursor: deletingId === notif.id ? 'not-allowed' : 'pointer',
                       padding: '4px'
                     }}
                   >

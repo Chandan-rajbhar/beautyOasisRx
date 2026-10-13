@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import {
   ShoppingCart,
@@ -186,6 +187,34 @@ export const OrdersPage = () => {
       navigator.clipboard.writeText(id);
       toast.success('Order ID copied to clipboard');
     }
+  };
+
+  // Viewport bounds-checked action menu opener
+  const handleOpenActionMenu = (e, row, needsPayment) => {
+    e.stopPropagation();
+    if (actionMenuOrderId === row.id) {
+      setActionMenuOrderId(null);
+      setActionMenuPosition(null);
+      return;
+    }
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const dropdownHeight = needsPayment ? 210 : 175;
+    const dropdownWidth = 185;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const openUpward = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
+
+    let top = openUpward ? rect.top - dropdownHeight - 6 : rect.bottom + 6;
+    if (top < 10) top = 10;
+
+    let right = window.innerWidth - rect.right;
+    if (right < 12) right = 12;
+    if (right + dropdownWidth > window.innerWidth) {
+      right = Math.max(12, window.innerWidth - dropdownWidth - 12);
+    }
+
+    setActionMenuPosition({ top, right });
+    setActionMenuOrderId(row.id);
   };
 
   // Define Table Columns (Enhanced Layout & Controlled Wrapping)
@@ -496,23 +525,7 @@ export const OrdersPage = () => {
           <div style={{ display: 'inline-flex', justifyContent: 'flex-end', width: '100%' }}>
             <button
               type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (actionMenuOrderId === row.id) {
-                  setActionMenuOrderId(null);
-                  setActionMenuPosition(null);
-                } else {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const dropdownHeight = needsPayment ? 210 : 175;
-                  const spaceBelow = window.innerHeight - rect.bottom;
-                  const openUpward = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
-                  setActionMenuPosition({
-                    top: openUpward ? rect.top - dropdownHeight - 6 : rect.bottom + 6,
-                    right: Math.max(16, window.innerWidth - rect.right)
-                  });
-                  setActionMenuOrderId(row.id);
-                }
-              }}
+              onClick={(e) => handleOpenActionMenu(e, row, needsPayment)}
               title="Order Actions"
               aria-label="Order actions menu"
               aria-haspopup="true"
@@ -556,6 +569,7 @@ export const OrdersPage = () => {
 
     return (
       <div
+        className="order-mobile-card"
         style={{
           background: '#ffffff',
           border: '1px solid #e2e8f0',
@@ -612,23 +626,7 @@ export const OrdersPage = () => {
           {/* Action Trigger */}
           <button
             type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (actionMenuOrderId === row.id) {
-                setActionMenuOrderId(null);
-                setActionMenuPosition(null);
-              } else {
-                const rect = e.currentTarget.getBoundingClientRect();
-                const dropdownHeight = needsPayment ? 210 : 175;
-                const spaceBelow = window.innerHeight - rect.bottom;
-                const openUpward = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
-                setActionMenuPosition({
-                  top: openUpward ? rect.top - dropdownHeight - 6 : rect.bottom + 6,
-                  right: Math.max(12, window.innerWidth - rect.right)
-                });
-                setActionMenuOrderId(row.id);
-              }
-            }}
+            onClick={(e) => handleOpenActionMenu(e, row, needsPayment)}
             title="Order Actions"
             aria-label="Order actions menu"
             aria-haspopup="true"
@@ -758,7 +756,7 @@ export const OrdersPage = () => {
           <p>Fulfill online apothecary orders, review line items, and manage customer shipments.</p>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <div className="admin-page-actions">
           <AdminButton
             variant="secondary"
             onClick={() => setIsManageStatusesOpen(true)}
@@ -831,7 +829,7 @@ export const OrdersPage = () => {
       {/* ─────────────────────────────────────────────
           GLOBAL THREE-DOT ACTION MENU PORTAL
           ───────────────────────────────────────────── */}
-      {actionMenuOrderId && actionMenuPosition && (() => {
+      {actionMenuOrderId && actionMenuPosition && typeof document !== 'undefined' && createPortal((() => {
         const row = orders.find((o) => o.id === actionMenuOrderId);
         if (!row) return null;
         const isPaid = (row.paymentStatus || row.payment_status || '').toLowerCase() === 'paid';
@@ -1018,7 +1016,7 @@ export const OrdersPage = () => {
             </button>
           </div>
         );
-      })()}
+      })(), document.body)}
 
       {/* ─────────────────────────────────────────────
           MODAL 1: ADD NEW ORDER

@@ -432,7 +432,7 @@ export const ManageOrderStatusesModal = ({
           })}
         </div>
 
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '8px' }}>
+        <div className="admin-drawer-footer-actions" style={{ marginTop: '8px' }}>
           <AdminButton variant="secondary" onClick={onClose}>
             Done
           </AdminButton>

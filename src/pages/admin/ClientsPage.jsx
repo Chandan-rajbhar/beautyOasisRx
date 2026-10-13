@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Users,
   Plus,
@@ -100,7 +101,7 @@ export const ClientsPage = () => {
   const [actionMenuClientId, setActionMenuClientId] = useState(null);
   const [actionMenuPosition, setActionMenuPosition] = useState(null);
 
-  // Close actions dropdown on click outside or window scroll
+  // Close actions dropdown on click outside, window scroll, or Escape key
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (!e.target.closest('.patient-action-menu-container') && !e.target.closest('.patient-action-dropdown-menu')) {
@@ -114,19 +115,49 @@ export const ClientsPage = () => {
         setActionMenuPosition(null);
       }
     };
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && actionMenuClientId) {
+        setActionMenuClientId(null);
+        setActionMenuPosition(null);
+      }
+    };
     if (actionMenuClientId) {
       document.addEventListener('mousedown', handleClickOutside);
       document.addEventListener('touchstart', handleClickOutside);
+      document.addEventListener('keydown', handleKeyDown);
       window.addEventListener('scroll', handleWindowChange, true);
       window.addEventListener('resize', handleWindowChange);
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('touchstart', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('scroll', handleWindowChange, true);
       window.removeEventListener('resize', handleWindowChange);
     };
   }, [actionMenuClientId]);
+
+  const handleToggleActionMenu = useCallback((e, row) => {
+    e.stopPropagation();
+    if (actionMenuClientId === row.id) {
+      setActionMenuClientId(null);
+      setActionMenuPosition(null);
+    } else {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const dropdownHeight = 180;
+      const spaceBelow = window.innerHeight - rect.bottom;
+      const openUpward = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
+      setActionMenuPosition({
+        top: openUpward ? rect.top - dropdownHeight - 6 : rect.bottom + 6,
+        right: Math.max(16, window.innerWidth - rect.right)
+      });
+      setActionMenuClientId(row.id);
+    }
+  }, [actionMenuClientId]);
+
+  const selectedActionClient = useMemo(() => {
+    return patients.find(p => p.id === actionMenuClientId) || null;
+  }, [patients, actionMenuClientId]);
 
   // Profile Photo State & Handlers
   const [selectedFile, setSelectedFile] = useState(null);
@@ -769,13 +800,14 @@ export const ClientsPage = () => {
       }
 
       // Cache photo in localStorage for guaranteed display
-      if (targetPhotoUrl && trimmedEmail) {
+      if (targetPhotoUrl && trimmedEmail && targetPhotoUrl.length <= 2000) {
         try {
           const photoKey = `patient_photo_${trimmedEmail.toLowerCase()}`;
           if (/^data:image\//i.test(targetPhotoUrl)) localStorage.removeItem(photoKey);
           else localStorage.setItem(photoKey, targetPhotoUrl);
         } catch (_) { }
       } else if (!targetPhotoUrl && trimmedEmail && editClient) {
+
         try {
           localStorage.removeItem(`patient_photo_${trimmedEmail.toLowerCase()}`);
         } catch (_) { }
@@ -1695,11 +1727,8 @@ export const ClientsPage = () => {
       align: 'right',
       width: '70px',
       minWidth: '70px',
-      render: (row, rowIndex, totalRowsOnPage) => {
+      render: (row) => {
         const isOpen = actionMenuClientId === row.id;
-        // Flip upward if the row is near the bottom of the page to prevent clipping
-        const openUpward = totalRowsOnPage > 2 && rowIndex >= totalRowsOnPage - 2;
-
         return (
           <div
             className="patient-action-menu-container"
@@ -1707,23 +1736,7 @@ export const ClientsPage = () => {
           >
             <button
               type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                if (actionMenuClientId === row.id) {
-                  setActionMenuClientId(null);
-                  setActionMenuPosition(null);
-                } else {
-                  const rect = e.currentTarget.getBoundingClientRect();
-                  const dropdownHeight = 175;
-                  const spaceBelow = window.innerHeight - rect.bottom;
-                  const openUpward = spaceBelow < dropdownHeight && rect.top > dropdownHeight;
-                  setActionMenuPosition({
-                    top: openUpward ? rect.top - dropdownHeight - 6 : rect.bottom + 6,
-                    right: Math.max(16, window.innerWidth - rect.right)
-                  });
-                  setActionMenuClientId(row.id);
-                }
-              }}
+              onClick={(e) => handleToggleActionMenu(e, row)}
               title="Actions"
               aria-label="Actions menu"
               aria-haspopup="true"
@@ -1744,180 +1757,315 @@ export const ClientsPage = () => {
             >
               <MoreVertical size={16} />
             </button>
-
-            {isOpen && actionMenuPosition && (
-              <div
-                className="patient-action-dropdown-menu"
-                style={{
-                  position: 'fixed',
-                  top: `${actionMenuPosition.top}px`,
-                  right: `${actionMenuPosition.right}px`,
-                  width: '160px',
-                  background: '#ffffff',
-                  border: '1px solid #e2e8f0',
-                  borderRadius: '10px',
-                  boxShadow: '0 10px 25px -5px rgba(15, 41, 66, 0.14), 0 8px 10px -6px rgba(15, 41, 66, 0.08)',
-                  zIndex: 99999,
-                  padding: '6px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '2px',
-                  textAlign: 'left'
-                }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                {/* 1. View Patient Profile */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActionMenuClientId(null);
-                    setActionMenuPosition(null);
-                    navigate(`/patients/${row.id}`);
-                  }}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    width: '100%',
-                    padding: '8px 10px',
-                    border: 'none',
-                    background: 'transparent',
-                    borderRadius: '6px',
-                    fontSize: '0.82rem',
-                    fontWeight: 500,
-                    color: '#0f2942',
-                    cursor: 'pointer',
-                    transition: 'background 0.15s ease',
-                    textAlign: 'left'
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = '#f0f7ff'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                >
-                  <Eye size={15} color="#1e5aa8" />
-                  <span>View Patient Profile</span>
-                </button>
-
-                {/* 2. Edit Patient */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActionMenuClientId(null);
-                    setActionMenuPosition(null);
-                    handleEditClick(row);
-                  }}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    width: '100%',
-                    padding: '8px 10px',
-                    border: 'none',
-                    background: 'transparent',
-                    borderRadius: '6px',
-                    fontSize: '0.82rem',
-                    fontWeight: 500,
-                    color: '#0f2942',
-                    cursor: 'pointer',
-                    transition: 'background 0.15s ease',
-                    textAlign: 'left'
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = '#f0f7ff'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                >
-                  <Edit2 size={15} color="#475569" />
-                  <span>Edit Patient</span>
-                </button>
-
-                {/* 3. Activate / Deactivate Patient */}
-                {(() => {
-                  const isPatientActive = String(row.status || row.account_status || 'Active').toLowerCase() !== 'inactive';
-                  return (
-                    <button
-                      type="button"
-                      disabled={statusUpdatingId === row.id}
-                      onClick={() => {
-                        if (statusUpdatingId === row.id) return;
-                        setActionMenuClientId(null);
-                        setActionMenuPosition(null);
-                        handleTogglePatientStatus(row);
-                      }}
-                      style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '10px',
-                        width: '100%',
-                        padding: '8px 10px',
-                        border: 'none',
-                        background: 'transparent',
-                        borderRadius: '6px',
-                        fontSize: '0.82rem',
-                        fontWeight: 500,
-                        color: isPatientActive ? '#b45309' : '#15803d',
-                        cursor: 'pointer',
-                        transition: 'background 0.15s ease',
-                        textAlign: 'left'
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.background = isPatientActive ? '#fffbeb' : '#f0fdf4';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = 'transparent';
-                      }}
-                    >
-                      {isPatientActive ? (
-                        <>
-                          <UserX size={15} color="#b45309" />
-                          <span>Deactivate</span>
-                        </>
-                      ) : (
-                        <>
-                          <UserCheck size={15} color="#15803d" />
-                          <span>Activate</span>
-                        </>
-                      )}
-                    </button>
-                  );
-                })()}
-
-                <div style={{ height: '1px', background: '#f1f5f9', margin: '4px 0' }} />
-
-                {/* 4. Delete Patient */}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActionMenuClientId(null);
-                    setActionMenuPosition(null);
-                    setDeleteConfirmId(row.id);
-                  }}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '10px',
-                    width: '100%',
-                    padding: '8px 10px',
-                    border: 'none',
-                    background: 'transparent',
-                    borderRadius: '6px',
-                    fontSize: '0.82rem',
-                    fontWeight: 500,
-                    color: '#dc2626',
-                    cursor: 'pointer',
-                    transition: 'background 0.15s ease',
-                    textAlign: 'left'
-                  }}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = '#fef2f2'; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                >
-                  <Trash2 size={15} color="#dc2626" />
-                  <span>Delete Patient</span>
-                </button>
-              </div>
-            )}
           </div>
         );
       }
     }
   ];
+
+  // ── RESPONSIVE MOBILE CARD RENDERER ──
+  const renderMobileCard = (row) => {
+    const isPatientActive = String(row.status || row.account_status || 'Active').toLowerCase() !== 'inactive';
+    const isMenuOpen = actionMenuClientId === row.id;
+    const photoUrl = row.profilePhotoUrl || row.profile_photo_url || row.avatar || null;
+    const patientName = row.name || row.full_name || 'Unnamed Patient';
+    const initial = patientName.charAt(0).toUpperCase();
+
+    return (
+      <div
+        className="patient-mobile-card"
+        onClick={() => navigate(`/patients/${row.id}`)}
+        style={{
+          background: '#ffffff',
+          border: '1px solid #e2e8f0',
+          borderRadius: '14px',
+          padding: '16px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '12px',
+          cursor: 'pointer',
+          position: 'relative'
+        }}
+      >
+        {/* Top Header: Avatar + Name + Role + Status + 3-Dot Menu */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '10px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', minWidth: 0, flex: 1 }}>
+            {/* Avatar */}
+            {photoUrl ? (
+              <img
+                src={photoUrl}
+                alt={patientName}
+                style={{
+                  width: '42px',
+                  height: '42px',
+                  borderRadius: '50%',
+                  objectFit: 'cover',
+                  border: '1.5px solid #cbd5e1',
+                  flexShrink: 0
+                }}
+                onError={(e) => {
+                  e.currentTarget.style.display = 'none';
+                  if (e.currentTarget.nextSibling) {
+                    e.currentTarget.nextSibling.style.display = 'flex';
+                  }
+                }}
+              />
+            ) : null}
+            <div
+              style={{
+                width: '42px',
+                height: '42px',
+                borderRadius: '50%',
+                background: 'linear-gradient(135deg, #1e5aa8 0%, #16a34a 100%)',
+                color: '#ffffff',
+                display: photoUrl ? 'none' : 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontWeight: 700,
+                fontSize: '0.95rem',
+                flexShrink: 0
+              }}
+            >
+              {initial}
+            </div>
+
+            {/* Name & Role */}
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                <span
+                  style={{
+                    fontWeight: 700,
+                    color: '#0f2942',
+                    fontSize: '0.96rem',
+                    lineHeight: 1.3,
+                    wordBreak: 'break-word'
+                  }}
+                >
+                  {patientName}
+                </span>
+                <span
+                  style={{
+                    fontSize: '0.68rem',
+                    fontWeight: 600,
+                    padding: '1px 6px',
+                    borderRadius: '4px',
+                    background: '#e0f2fe',
+                    color: '#0369a1',
+                    border: '1px solid #bae6fd'
+                  }}
+                >
+                  {row.role || 'Patient'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Status Badge & Actions Button */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+            <AdminBadge status={row.status || row.account_status || 'Active'} />
+            <div className="patient-action-menu-container">
+              <button
+                type="button"
+                onClick={(e) => handleToggleActionMenu(e, row)}
+                title="Actions"
+                aria-label="Actions menu"
+                style={{
+                  background: isMenuOpen ? '#e2e8f0' : '#f8fafc',
+                  border: '1px solid',
+                  borderColor: isMenuOpen ? '#94a3b8' : '#cbd5e1',
+                  borderRadius: '6px',
+                  padding: '6px 8px',
+                  cursor: 'pointer',
+                  color: '#334155',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+              >
+                <MoreVertical size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Contact Details (Email & Phone) */}
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '6px',
+            background: '#f8fafc',
+            padding: '10px 12px',
+            borderRadius: '8px',
+            border: '1px solid #f1f5f9',
+            fontSize: '0.82rem',
+            color: '#334155'
+          }}
+        >
+          {/* Email */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              minWidth: 0,
+              cursor: row.email ? 'pointer' : 'default'
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (row.email) {
+                navigator.clipboard?.writeText(row.email);
+                toast.success(`Copied "${row.email}" to clipboard!`);
+              }
+            }}
+            title={row.email ? 'Click to copy email' : undefined}
+          >
+            <Mail size={14} color="#1e5aa8" style={{ flexShrink: 0 }} />
+            <span
+              style={{
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+                color: row.email ? '#0f2942' : '#94a3b8'
+              }}
+            >
+              {row.email || 'No email provided'}
+            </span>
+          </div>
+
+          {/* Phone */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              minWidth: 0,
+              cursor: row.phone ? 'pointer' : 'default'
+            }}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (row.phone) {
+                navigator.clipboard?.writeText(row.phone);
+                toast.success(`Copied "${row.phone}" to clipboard!`);
+              }
+            }}
+            title={row.phone ? 'Click to copy phone' : undefined}
+          >
+            <Phone size={14} color="#16a34a" style={{ flexShrink: 0 }} />
+            <span style={{ color: row.phone ? '#0f2942' : '#94a3b8' }}>
+              {row.phone || 'No phone provided'}
+            </span>
+          </div>
+        </div>
+
+        {/* Action Shortcut Buttons */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            paddingTop: '6px',
+            borderTop: '1px solid #f1f5f9'
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* View Profile */}
+          <button
+            type="button"
+            onClick={() => navigate(`/patients/${row.id}`)}
+            style={{
+              flex: 1,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '5px',
+              padding: '7px 10px',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+              background: '#ffffff',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              color: '#1e5aa8',
+              cursor: 'pointer'
+            }}
+          >
+            <Eye size={13} />
+            <span>Profile</span>
+          </button>
+
+          {/* Edit */}
+          <button
+            type="button"
+            onClick={() => handleEditClick(row)}
+            style={{
+              flex: 1,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '5px',
+              padding: '7px 10px',
+              borderRadius: '8px',
+              border: '1px solid #cbd5e1',
+              background: '#ffffff',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              color: '#334155',
+              cursor: 'pointer'
+            }}
+          >
+            <Edit2 size={13} />
+            <span>Edit</span>
+          </button>
+
+          {/* Toggle Status */}
+          <button
+            type="button"
+            disabled={statusUpdatingId === row.id}
+            onClick={() => handleTogglePatientStatus(row)}
+            style={{
+              flex: 1,
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '5px',
+              padding: '7px 10px',
+              borderRadius: '8px',
+              border: `1px solid ${isPatientActive ? '#fde68a' : '#bbf7d0'}`,
+              background: isPatientActive ? '#fffbeb' : '#f0fdf4',
+              fontSize: '0.8rem',
+              fontWeight: 600,
+              color: isPatientActive ? '#92400e' : '#166534',
+              cursor: 'pointer'
+            }}
+          >
+            {isPatientActive ? <UserX size={13} /> : <UserCheck size={13} />}
+            <span>{isPatientActive ? 'Deactivate' : 'Activate'}</span>
+          </button>
+
+          {/* Delete */}
+          <button
+            type="button"
+            onClick={() => setDeleteConfirmId(row.id)}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '7px 10px',
+              borderRadius: '8px',
+              border: '1px solid #fecaca',
+              background: '#fff1f2',
+              color: '#be123c',
+              cursor: 'pointer'
+            }}
+            title="Delete patient"
+            aria-label="Delete patient"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div>
@@ -1982,6 +2130,7 @@ export const ClientsPage = () => {
         emptyDescription="Try clearing your search query or register a new patient."
         emptyActionLabel="Register User"
         onEmptyAction={handleOpenAddModal}
+        renderMobileCard={renderMobileCard}
       />
 
       {/* ── Register / Edit Patient Right-Side Drawer ── */}
@@ -1999,7 +2148,7 @@ export const ClientsPage = () => {
         subtitle={editClient ? `Update details for registry record #${editClient.id || ''}` : "Enter clinical patient details for the registry."}
         width="560px"
         footer={
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', width: '100%' }}>
+          <div className="admin-drawer-footer-actions">
             <AdminButton
               variant="secondary"
               disabled={isSubmitting}
@@ -2511,7 +2660,7 @@ export const ClientsPage = () => {
         subtitle={`Registry #${selectedClient?.id || ''}`}
         width="600px"
         footer={
-          <div style={{ display: 'flex', gap: '10px' }}>
+          <div className="admin-drawer-footer-actions">
             <AdminButton
               variant="secondary"
               onClick={() => {
@@ -2987,6 +3136,178 @@ export const ClientsPage = () => {
             </div>
           </div>
         </AdminModal>
+      )}
+
+      {/* ── Root-level Patient Actions Dropdown (Portal) ── */}
+      {actionMenuClientId && actionMenuPosition && selectedActionClient && createPortal(
+        <div
+          className="patient-action-dropdown-menu"
+          style={{
+            position: 'fixed',
+            top: `${actionMenuPosition.top}px`,
+            right: `${actionMenuPosition.right}px`,
+            width: '175px',
+            background: '#ffffff',
+            border: '1px solid #e2e8f0',
+            borderRadius: '10px',
+            boxShadow: '0 10px 25px -5px rgba(15, 41, 66, 0.14), 0 8px 10px -6px rgba(15, 41, 66, 0.08)',
+            zIndex: 99999,
+            padding: '6px',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '2px',
+            textAlign: 'left',
+            animation: 'apptMenuFade 0.15s cubic-bezier(0.16, 1, 0.3, 1)'
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* 1. View Patient Profile */}
+          <button
+            type="button"
+            onClick={() => {
+              setActionMenuClientId(null);
+              setActionMenuPosition(null);
+              navigate(`/patients/${selectedActionClient.id}`);
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              width: '100%',
+              padding: '8px 10px',
+              border: 'none',
+              background: 'transparent',
+              borderRadius: '6px',
+              fontSize: '0.82rem',
+              fontWeight: 500,
+              color: '#0f2942',
+              cursor: 'pointer',
+              transition: 'background 0.15s ease',
+              textAlign: 'left'
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = '#f0f7ff'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+          >
+            <Eye size={15} color="#1e5aa8" />
+            <span>View Profile</span>
+          </button>
+
+          {/* 2. Edit Patient */}
+          <button
+            type="button"
+            onClick={() => {
+              setActionMenuClientId(null);
+              setActionMenuPosition(null);
+              handleEditClick(selectedActionClient);
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              width: '100%',
+              padding: '8px 10px',
+              border: 'none',
+              background: 'transparent',
+              borderRadius: '6px',
+              fontSize: '0.82rem',
+              fontWeight: 500,
+              color: '#0f2942',
+              cursor: 'pointer',
+              transition: 'background 0.15s ease',
+              textAlign: 'left'
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = '#f0f7ff'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+          >
+            <Edit2 size={15} color="#475569" />
+            <span>Edit Patient</span>
+          </button>
+
+          {/* 3. Activate / Deactivate Patient */}
+          {(() => {
+            const isPatientActive = String(selectedActionClient.status || selectedActionClient.account_status || 'Active').toLowerCase() !== 'inactive';
+            return (
+              <button
+                type="button"
+                disabled={statusUpdatingId === selectedActionClient.id}
+                onClick={() => {
+                  if (statusUpdatingId === selectedActionClient.id) return;
+                  setActionMenuClientId(null);
+                  setActionMenuPosition(null);
+                  handleTogglePatientStatus(selectedActionClient);
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '10px',
+                  width: '100%',
+                  padding: '8px 10px',
+                  border: 'none',
+                  background: 'transparent',
+                  borderRadius: '6px',
+                  fontSize: '0.82rem',
+                  fontWeight: 500,
+                  color: isPatientActive ? '#b45309' : '#15803d',
+                  cursor: 'pointer',
+                  transition: 'background 0.15s ease',
+                  textAlign: 'left'
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = isPatientActive ? '#fffbeb' : '#f0fdf4';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'transparent';
+                }}
+              >
+                {isPatientActive ? (
+                  <>
+                    <UserX size={15} color="#b45309" />
+                    <span>Deactivate</span>
+                  </>
+                ) : (
+                  <>
+                    <UserCheck size={15} color="#15803d" />
+                    <span>Activate</span>
+                  </>
+                )}
+              </button>
+            );
+          })()}
+
+          <div style={{ height: '1px', background: '#f1f5f9', margin: '4px 0' }} />
+
+          {/* 4. Delete Patient */}
+          <button
+            type="button"
+            onClick={() => {
+              setActionMenuClientId(null);
+              setActionMenuPosition(null);
+              setDeleteConfirmId(selectedActionClient.id);
+            }}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              width: '100%',
+              padding: '8px 10px',
+              border: 'none',
+              background: 'transparent',
+              borderRadius: '6px',
+              fontSize: '0.82rem',
+              fontWeight: 500,
+              color: '#dc2626',
+              cursor: 'pointer',
+              transition: 'background 0.15s ease',
+              textAlign: 'left'
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = '#fef2f2'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+          >
+            <Trash2 size={15} color="#dc2626" />
+            <span>Delete Patient</span>
+          </button>
+        </div>,
+        document.body
       )}
     </div>
   );
