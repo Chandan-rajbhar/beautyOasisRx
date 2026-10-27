@@ -122,6 +122,12 @@ export function App() {
                   <Route path="/patients/:patientId" element={<PatientProfilePage />} />
                   <Route path="/clients/:patientId" element={<PatientProfilePage />} />
                   <Route path="/services" element={<ServicesPage />} />
+                  <Route path="/dermatology" element={<ServicesPage />} />
+                  <Route path="/dermatology-services" element={<ServicesPage />} />
+                  <Route path="/telederm" element={<ServicesPage />} />
+                  <Route path="/telederm-services" element={<ServicesPage />} />
+                  <Route path="/dermatology-appointments" element={<AppointmentsPage />} />
+                  <Route path="/telederm-appointments" element={<AppointmentsPage />} />
                   <Route path="/products" element={<ProductsPage />} />
                   <Route path="/coupons" element={<CouponsPage />} />
                   <Route path="/orders" element={<OrdersPage />} />
@@ -144,6 +150,12 @@ export function App() {
                   <Route path="/admin/patients/:patientId" element={<PatientProfilePage />} />
                   <Route path="/admin/clients/:patientId" element={<PatientProfilePage />} />
                   <Route path="/admin/services" element={<ServicesPage />} />
+                  <Route path="/admin/dermatology" element={<ServicesPage />} />
+                  <Route path="/admin/dermatology-services" element={<ServicesPage />} />
+                  <Route path="/admin/telederm" element={<ServicesPage />} />
+                  <Route path="/admin/telederm-services" element={<ServicesPage />} />
+                  <Route path="/admin/dermatology-appointments" element={<AppointmentsPage />} />
+                  <Route path="/admin/telederm-appointments" element={<AppointmentsPage />} />
                   <Route path="/admin/products" element={<ProductsPage />} />
                   <Route path="/admin/coupons" element={<CouponsPage />} />
                   <Route path="/admin/orders" element={<OrdersPage />} />

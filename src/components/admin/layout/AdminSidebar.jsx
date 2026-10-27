@@ -18,6 +18,8 @@ import {
   LogOut,
   X,
   Tag,
+  Stethoscope,
+  ClipboardList,
 } from 'lucide-react';
 
 import { useAdminAuth } from '../../../context/AdminAuthContext';
@@ -71,10 +73,12 @@ export const AdminSidebar = ({
       label: "Clinical & Practice",
       items: [
         { label: "Dashboard", path: "/dashboard", icon: <LayoutDashboard size={18} />, permission: "all" },
-        { label: "Appointments", path: "/appointments", icon: <Calendar size={18} />, permission: "appointments" },
+        { label: "Treatments Appointments", path: "/appointments", icon: <Calendar size={18} />, permission: "appointments" },
         { label: "Appointment Times", path: "/appointment-times", icon: <Clock size={18} />, permission: "appointments" },
         { label: "Clients / Patients", path: "/clients", icon: <Users size={18} />, permission: "clients" },
         { label: "Treatments & Services", path: "/services", icon: <Sparkles size={18} />, permission: "services" },
+        { label: "TeleDerm Services", path: "/dermatology", icon: <Stethoscope size={18} />, permission: "services" },
+        { label: "TeleDerm Appointments", path: "/dermatology-appointments", icon: <ClipboardList size={18} />, permission: "appointments" },
         { label: "Staff & Providers", path: "/providers", icon: <UserCheck size={18} />, permission: "providers" }
       ]
     },
